@@ -1,0 +1,1956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>CS2 Vault</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:#0c0e14; --panel:#12151e; --card:#181c28; --lift:#1e2333;
+      --border:#252a3a; --border2:#2e3549;
+      --text:#d8dde8; --sub:#8892a4; --dim:#505a6e;
+      --accent:#5d7cfc; --accent2:#3d5ce0;
+      --green:#3ed598; --red:#f0506e; --yellow:#f5c542; --orange:#f08050; --purple:#9b7cfc;
+      --r:8px; --r2:12px;
+      /* Mark colors */
+      --mark1:#5d7cfc;
+    }
+    body { background:var(--bg); color:var(--text); font-family:'DM Sans',sans-serif; font-size:14px; line-height:1.5; min-height:100vh; }
+    .layout { display:flex; min-height:100vh; }
+
+    /* ── Sidebar ── */
+    .sidebar { width:216px; flex-shrink:0; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; position:fixed; top:0; left:0; bottom:0; z-index:10; }
+    .sidebar-logo { padding:18px 18px 13px; border-bottom:1px solid var(--border); }
+    .wordmark { font-family:'Syne',sans-serif; font-weight:800; font-size:18px; letter-spacing:-.02em; color:#fff; }
+    .tagline { font-size:10px; color:var(--dim); margin-top:1px; font-family:'DM Mono',monospace; }
+    .sidebar-user { padding:9px 13px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:9px; }
+    .user-avatar { width:27px; height:27px; border-radius:50%; background:linear-gradient(135deg,var(--accent),var(--purple)); display:flex; align-items:center; justify-content:center; font-size:11px; font-weight:700; flex-shrink:0; }
+    .user-name { font-size:12px; font-weight:600; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .u-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+    .dot-on { background:var(--green); box-shadow:0 0 5px var(--green); }
+    .dot-conn { background:var(--yellow); animation:pulse 1.2s ease-in-out infinite; }
+    .dot-off { background:var(--dim); }
+    .nav { flex:1; padding:7px; display:flex; flex-direction:column; gap:1px; overflow-y:auto; }
+    .nav-item { display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:var(--r); font-size:13px; font-weight:500; color:var(--sub); cursor:pointer; border:none; background:none; width:100%; text-align:left; transition:all .15s; }
+    .nav-item:hover { background:var(--card); color:var(--text); }
+    .nav-item.active { background:rgba(93,124,252,.14); color:var(--accent); }
+    .nav-icon { font-size:14px; width:19px; text-align:center; flex-shrink:0; }
+    .nav-badge { margin-left:auto; background:var(--accent); color:#fff; font-size:10px; font-weight:700; padding:1px 6px; border-radius:10px; font-family:'DM Mono',monospace; }
+    .nav-section { padding:6px 10px 3px; font-size:9px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.08em; margin-top:6px; }
+    .sidebar-footer { padding:7px; border-top:1px solid var(--border); }
+
+    /* ── Content ── */
+    .content { margin-left:216px; flex:1; display:flex; flex-direction:column; min-height:100vh; }
+    .topbar { background:var(--panel); border-bottom:1px solid var(--border); padding:0 22px; height:50px; display:flex; align-items:center; gap:10px; position:sticky; top:0; z-index:5; }
+    .topbar-title { font-family:'Syne',sans-serif; font-weight:700; font-size:15px; }
+    .stat-pill { background:var(--card); border:1px solid var(--border); border-radius:20px; padding:3px 10px; font-size:11px; font-family:'DM Mono',monospace; color:var(--sub); display:flex; align-items:center; gap:5px; }
+    .stat-pill .val { color:var(--green); }
+    .page { padding:20px 22px; flex:1; }
+
+    /* ── Summary cards ── */
+    .summary-strip { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:18px; }
+    .summary-card { background:var(--card); border:1px solid var(--border); border-radius:var(--r2); padding:14px 16px; position:relative; overflow:hidden; }
+    .summary-card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
+    .sc-total::before { background:linear-gradient(90deg,var(--green),var(--accent)); }
+    .sc-inv::before   { background:linear-gradient(90deg,var(--accent),var(--purple)); }
+    .sc-su::before    { background:linear-gradient(90deg,var(--purple),var(--orange)); }
+    .sc-label { font-size:10px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; margin-bottom:5px; }
+    .sc-value { font-family:'Syne',sans-serif; font-size:26px; font-weight:700; line-height:1; }
+    .sc-sub   { font-size:11px; color:var(--sub); margin-top:4px; font-family:'DM Mono',monospace; }
+
+    /* ── Toolbar ── */
+    .toolbar { display:flex; gap:7px; margin-bottom:13px; align-items:center; flex-wrap:wrap; }
+    .search-wrap { flex:1; min-width:160px; max-width:300px; position:relative; }
+    .search-ico { position:absolute; left:9px; top:50%; transform:translateY(-50%); color:var(--dim); font-size:13px; pointer-events:none; }
+    .search-input { width:100%; background:var(--card); border:1px solid var(--border); border-radius:var(--r); padding:7px 11px 7px 28px; color:var(--text); font-size:13px; font-family:'DM Sans',sans-serif; outline:none; transition:border-color .15s; }
+    .search-input:focus { border-color:var(--accent); }
+    .search-input::placeholder { color:var(--dim); }
+    .filter-grp { display:flex; gap:3px; }
+    .filter-btn { padding:5px 11px; border-radius:var(--r); border:1px solid var(--border); background:var(--card); color:var(--sub); font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; font-family:'DM Sans',sans-serif; }
+    .filter-btn:hover { color:var(--text); border-color:var(--border2); }
+    .filter-btn.active { background:rgba(93,124,252,.16); border-color:rgba(93,124,252,.45); color:var(--accent); }
+    .count-lbl { font-size:11px; color:var(--dim); font-family:'DM Mono',monospace; white-space:nowrap; }
+    .select-wrap { background:var(--card); border:1px solid var(--border); border-radius:var(--r); padding:5px 10px; color:var(--text); font-size:12px; font-family:'DM Sans',sans-serif; outline:none; cursor:pointer; }
+    .select-wrap:focus { border-color:var(--accent); }
+
+    /* ── Buttons ── */
+    .btn { display:inline-flex; align-items:center; gap:5px; padding:6px 13px; border-radius:var(--r); border:none; font-size:13px; font-weight:600; cursor:pointer; transition:all .15s; white-space:nowrap; font-family:'DM Sans',sans-serif; }
+    .btn:disabled { opacity:.4; cursor:not-allowed; }
+    .btn-primary { background:var(--accent); color:#fff; }
+    .btn-primary:hover:not(:disabled) { background:var(--accent2); }
+    .btn-ghost { background:var(--card); color:var(--text); border:1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { border-color:var(--border2); background:var(--lift); }
+    .btn-green { background:rgba(62,213,152,.12); color:var(--green); border:1px solid rgba(62,213,152,.28); }
+    .btn-green:hover:not(:disabled) { background:rgba(62,213,152,.22); }
+    .btn-danger { background:rgba(240,80,110,.1); color:var(--red); border:1px solid rgba(240,80,110,.24); }
+    .btn-danger:hover:not(:disabled) { background:rgba(240,80,110,.18); }
+    .btn-full { width:100%; justify-content:center; padding:9px; }
+
+    /* ── Table (overview) ── */
+    .table-wrap { background:var(--panel); border:1px solid var(--border); border-radius:var(--r2); overflow:hidden; }
+    .table-scroll { overflow-x:auto; max-height:500px; overflow-y:auto; }
+    table { width:100%; border-collapse:collapse; }
+    thead { background:var(--card); position:sticky; top:0; z-index:2; }
+    th { padding:8px 12px; text-align:left; font-size:10px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.06em; white-space:nowrap; cursor:pointer; user-select:none; }
+    th:hover { color:var(--sub); }
+    th.r, td.r { text-align:right; }
+    td { padding:8px 12px; border-bottom:1px solid var(--border); font-size:13px; }
+    tr:last-child td { border-bottom:none; }
+    tbody tr:hover td { background:var(--card); }
+    tfoot td { background:var(--card); font-weight:600; border-top:1px solid var(--border2); }
+    .src-tag { display:inline-flex; align-items:center; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; font-family:'DM Mono',monospace; }
+    .src-inv { background:rgba(93,124,252,.14); color:var(--accent); }
+    .src-su  { background:rgba(155,124,252,.14); color:var(--purple); }
+    .price-val { font-family:'DM Mono',monospace; }
+    .pv-green { color:var(--green); }
+    .pv-big   { color:var(--green); font-weight:600; }
+    .pv-dim   { color:var(--dim); }
+    .qty-badge { display:inline-flex; align-items:center; background:rgba(245,197,66,.11); color:var(--yellow); font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; font-family:'DM Mono',monospace; }
+    .cache-dot { display:inline-block; width:4px; height:4px; border-radius:50%; background:var(--accent); margin-left:5px; vertical-align:middle; }
+    .cache-dot.stale { background:var(--orange); }
+
+    /* ── Item grid ── */
+    .item-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
+    .item-grid.dense { grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); }
+    .icard {
+      background:var(--card); border:1px solid var(--border); border-radius:var(--r);
+      overflow:hidden; cursor:pointer; transition:all .12s; position:relative; user-select:none;
+    }
+    .icard:hover { border-color:var(--border2); transform:translateY(-1px); }
+    .icard.selected { border-color:var(--accent); }
+    .icard.marked { border-color:var(--accent); }
+
+    /* ── Transfer grouped rows ── */
+    .tgroup { background:var(--card); border:1px solid var(--border); border-radius:var(--r); margin-bottom:6px; overflow:hidden; transition:border-color .12s; }
+    .tgroup:hover { border-color:var(--border2); }
+    .tgroup-header { display:flex; align-items:center; gap:9px; padding:8px 11px; cursor:pointer; user-select:none; }
+    .tgroup-img { width:52px; height:34px; flex-shrink:0; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:4px; background:var(--lift); }
+    .tgroup-img img { width:100%; height:100%; object-fit:contain; }
+    .tgroup-placeholder { width:52px; height:34px; border-radius:4px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:15px; font-weight:700; color:rgba(255,255,255,.3); font-family:'Syne',sans-serif; }
+    .tgroup-info { flex:1; min-width:0; }
+    .tgroup-name { font-size:12px; font-weight:600; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .tgroup-wear { font-size:10px; color:var(--sub); }
+    .tgroup-count { background:rgba(93,124,252,.14); color:var(--accent); font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; font-family:'DM Mono',monospace; flex-shrink:0; }
+    .tgroup-price { font-size:11px; font-family:'DM Mono',monospace; color:var(--green); flex-shrink:0; min-width:52px; text-align:right; }
+    .tgroup-expand { font-size:10px; color:var(--dim); flex-shrink:0; transition:transform .15s; width:14px; }
+    .tgroup-expand.open { transform:rotate(90deg); }
+    .tgroup-subitems { display:grid; grid-template-columns:repeat(auto-fill,minmax(115px,1fr)); gap:6px; padding:0 10px 10px; }
+    .tsubcard { background:var(--lift); border:1px solid var(--border); border-radius:var(--r); padding:6px 8px; cursor:pointer; transition:all .1s; position:relative; }
+    .tsubcard:hover { border-color:var(--border2); }
+    .tsubcard-float { font-size:11px; font-family:'DM Mono',monospace; color:var(--text); font-weight:500; }
+    .tsubcard-price { font-size:10px; font-family:'DM Mono',monospace; color:var(--green); margin-top:2px; }
+    .tsubcard-dot { position:absolute; top:5px; right:5px; width:7px; height:7px; border-radius:50%; }
+    .mark-name-input { background:none; border:none; border-bottom:1px solid var(--border); color:var(--text); font-size:11px; font-family:'DM Sans',sans-serif; outline:none; width:90px; padding:1px 2px; }
+    .mark-name-input:focus { border-bottom-color:var(--accent); }
+    .toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--green); color:#0c0e14; font-size:13px; font-weight:600; padding:9px 18px; border-radius:var(--r); z-index:100; animation:fadeup .25s ease; pointer-events:none; }
+    @keyframes fadeup { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+    .icard-img { width:100%; aspect-ratio:16/10; background:var(--lift); display:flex; align-items:center; justify-content:center; overflow:hidden; position:relative; }
+    .icard-img img { width:90%; height:90%; object-fit:contain; }
+    .icard-img .no-img { font-size:22px; color:var(--dim); }
+    .icard-qty { position:absolute; top:5px; right:5px; background:rgba(0,0,0,.7); color:var(--yellow); font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; font-family:'DM Mono',monospace; }
+    .icard-mark-dot { position:absolute; top:5px; left:5px; width:9px; height:9px; border-radius:50%; border:1px solid rgba(0,0,0,.3); }
+    .icard-body { padding:8px 9px; }
+    .icard-name { font-size:11px; font-weight:600; line-height:1.3; margin-bottom:2px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; color:var(--text); }
+    .icard-wear { font-size:10px; color:var(--sub); margin-bottom:4px; }
+    .icard-price { font-size:11px; font-family:'DM Mono',monospace; color:var(--green); }
+    .icard-check { position:absolute; top:5px; right:5px; width:14px; height:14px; border-radius:50%; background:var(--accent); display:flex; align-items:center; justify-content:center; font-size:8px; color:#fff; opacity:0; transition:opacity .1s; }
+    .icard.selected .icard-check { opacity:1; }
+
+    /* ── Mark bar ── */
+    .mark-bar { display:flex; align-items:center; gap:8px; padding:8px 10px; background:var(--card); border:1px solid var(--border); border-radius:var(--r); margin-bottom:10px; flex-wrap:wrap; }
+    .mark-label { font-size:11px; color:var(--sub); font-weight:600; }
+    .mark-btn { width:22px; height:22px; border-radius:50%; border:2px solid transparent; cursor:pointer; transition:all .1s; flex-shrink:0; }
+    .mark-btn:hover { transform:scale(1.15); }
+    .mark-btn.active-mark { border-color:#fff; box-shadow:0 0 0 1px rgba(255,255,255,.4); }
+    .mark-clear { font-size:11px; color:var(--dim); cursor:pointer; padding:2px 7px; border-radius:4px; border:1px solid var(--border); background:none; font-family:'DM Sans',sans-serif; }
+    .mark-clear:hover { color:var(--text); }
+    .mark-count { font-size:10px; font-family:'DM Mono',monospace; color:var(--sub); }
+    .mark-legend { display:flex; gap:8px; flex-wrap:wrap; }
+    .mark-legend-item { display:flex; align-items:center; gap:4px; font-size:11px; color:var(--sub); cursor:pointer; }
+    .mark-legend-item:hover { color:var(--text); }
+    .mark-dot { width:9px; height:9px; border-radius:50%; }
+
+    /* ── Storage unit tabs ── */
+    .unit-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:13px; }
+    .unit-tab { padding:6px 13px; border-radius:var(--r); border:1px solid var(--border); background:var(--card); color:var(--sub); font-size:12px; font-weight:600; cursor:pointer; transition:all .15s; display:flex; align-items:center; gap:6px; }
+    .unit-tab:hover { color:var(--text); border-color:var(--border2); }
+    .unit-tab.active { background:rgba(93,124,252,.14); border-color:rgba(93,124,252,.4); color:var(--accent); }
+    .unit-tab .tab-count { font-size:10px; font-family:'DM Mono',monospace; opacity:.7; }
+    .unit-tab .tab-dot { width:5px; height:5px; border-radius:50%; background:var(--dim); }
+    .unit-tab.loaded .tab-dot { background:var(--green); }
+
+    /* ── Marked panel ── */
+    .marked-panel { background:var(--card); border:1px solid var(--border); border-radius:var(--r2); overflow:hidden; }
+    .marked-header { padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
+    .marked-title { font-size:13px; font-weight:600; }
+    .marked-groups { padding:10px; display:flex; flex-direction:column; gap:8px; }
+    .marked-group { background:var(--lift); border-radius:var(--r); padding:8px 10px; }
+    .marked-group-header { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+    .marked-group-dot { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
+    .marked-group-name { font-size:11px; font-weight:600; }
+    .marked-group-count { font-size:10px; color:var(--sub); font-family:'DM Mono',monospace; margin-left:auto; }
+    .marked-group-items { display:flex; flex-wrap:wrap; gap:4px; }
+    .marked-item-chip { font-size:10px; padding:2px 7px; border-radius:4px; background:var(--card); color:var(--sub); max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* ── Units row (overview) ── */
+    .units-row { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:14px; }
+    .unit-chip { background:var(--card); border:1px solid var(--border); border-radius:var(--r); padding:6px 12px; display:flex; align-items:center; gap:6px; font-size:12px; }
+    .unit-chip.loaded { border-color:rgba(62,213,152,.3); }
+    .chip-dot { width:5px; height:5px; border-radius:50%; background:var(--dim); flex-shrink:0; }
+    .unit-chip.loaded .chip-dot { background:var(--green); }
+    .chip-count { font-size:10px; color:var(--sub); font-family:'DM Mono',monospace; }
+
+    /* ── Progress ── */
+    .progress-panel { background:var(--card); border:1px solid var(--border); border-radius:var(--r2); padding:14px 16px; margin-bottom:14px; }
+    .progress-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+    .progress-label { font-size:13px; font-weight:600; }
+    .progress-pct   { font-family:'DM Mono',monospace; font-size:13px; color:var(--green); font-weight:600; }
+    .progress-bar   { height:3px; background:var(--lift); border-radius:2px; overflow:hidden; margin-bottom:7px; }
+    .progress-fill  { height:100%; background:linear-gradient(90deg,var(--green),var(--accent)); border-radius:2px; transition:width .4s; }
+    .progress-meta  { display:flex; gap:14px; font-size:11px; color:var(--dim); font-family:'DM Mono',monospace; }
+    .progress-item  { font-size:11px; color:var(--sub); margin-top:3px; font-style:italic; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+    /* ── Log ── */
+    .log-panel { background:var(--card); border:1px solid var(--border); border-radius:var(--r2); margin-bottom:14px; overflow:hidden; }
+    .log-header { padding:7px 13px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; cursor:pointer; }
+    .log-title { font-size:10px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; }
+    .log-lines { padding:7px 11px; font-family:'DM Mono',monospace; font-size:11px; max-height:110px; overflow-y:auto; display:flex; flex-direction:column; gap:2px; }
+    .log-line { color:var(--dim); line-height:1.4; }
+    .log-ok   { color:var(--green); }
+    .log-err  { color:var(--red); }
+    .log-gc   { color:var(--accent); }
+    .log-warn { color:var(--orange); }
+
+    /* ── Alerts ── */
+    .alert { padding:9px 13px; border-radius:var(--r); font-size:13px; margin-bottom:12px; display:flex; align-items:center; gap:8px; border:1px solid; }
+    .alert-red   { background:rgba(240,80,110,.07);  border-color:rgba(240,80,110,.22); color:var(--red); }
+    .alert-blue  { background:rgba(93,124,252,.07);  border-color:rgba(93,124,252,.22); color:var(--accent); }
+    .alert-green { background:rgba(62,213,152,.07); border-color:rgba(62,213,152,.22); color:var(--green); }
+    .alert-close { margin-left:auto; background:none; border:none; color:inherit; cursor:pointer; font-size:14px; opacity:.55; }
+    .alert-close:hover { opacity:1; }
+    @keyframes fadeInUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+
+    /* ── Login ── */
+    .login-layout { min-height:100vh; display:flex; align-items:center; justify-content:center; background:var(--bg); padding:24px; }
+    .login-card { background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:34px; width:100%; max-width:420px; }
+    .login-logo { font-family:'Syne',sans-serif; font-weight:800; font-size:22px; color:#fff; margin-bottom:4px; }
+    .login-sub  { font-size:13px; color:var(--sub); margin-bottom:24px; }
+    .tab-row { display:flex; border:1px solid var(--border); border-radius:var(--r); overflow:hidden; margin-bottom:16px; }
+    .tab-btn { flex:1; padding:7px 12px; background:none; border:none; font-size:13px; font-weight:600; color:var(--sub); cursor:pointer; font-family:'DM Sans',sans-serif; transition:all .15s; }
+    .tab-btn.active { background:var(--card); color:var(--text); }
+    .tab-btn:hover:not(.active) { color:var(--text); }
+    .form-group { margin-bottom:12px; }
+    .form-label { display:block; font-size:10px; font-weight:700; color:var(--dim); text-transform:uppercase; letter-spacing:.07em; margin-bottom:4px; }
+    .form-input { width:100%; background:var(--card); border:1px solid var(--border); border-radius:var(--r); padding:8px 11px; color:var(--text); font-size:14px; font-family:'DM Sans',sans-serif; outline:none; transition:border-color .15s; }
+    .form-input:focus { border-color:var(--accent); }
+    .form-hint { font-size:11px; color:var(--dim); margin-top:3px; }
+    .qr-wrap { display:flex; flex-direction:column; align-items:center; padding:18px; background:var(--card); border:1px solid var(--border); border-radius:var(--r2); margin-bottom:13px; }
+    .qr-status { margin-top:10px; font-size:13px; color:var(--sub); text-align:center; }
+    .qr-scanned { color:var(--green); font-weight:600; }
+    .divider { height:1px; background:var(--border); margin:12px 0; }
+
+    /* ── Misc ── */
+    .spinner { display:inline-block; width:12px; height:12px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spin .7s linear infinite; }
+    @keyframes spin  { to { transform:rotate(360deg); } }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    .empty-state { text-align:center; padding:50px 24px; color:var(--sub); }
+    .empty-state h3 { font-family:'Syne',sans-serif; font-size:17px; color:var(--text); margin-bottom:6px; }
+    .empty-state p { font-size:13px; max-width:300px; margin:0 auto 5px; }
+    ::-webkit-scrollbar { width:4px; height:4px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:var(--border2); border-radius:3px; }
+    ::-webkit-scrollbar-thumb:hover { background:var(--dim); }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+const api = async (method, url, body) => {
+  const r = await fetch(url, { method, headers:body?{'Content-Type':'application/json'}:undefined, body:body?JSON.stringify(body):undefined });
+  return r.json().catch(()=>({}));
+};
+const currencySymbols = { USD: '$', EUR: '€', GBP: '£' };
+const fmt    = (v, currency='USD') => v==null?'—':(currencySymbols[currency]||'$')+v.toFixed(2);
+const fmtBig = (v, currency='USD') => { if(!v||v===0) return (currencySymbols[currency]||'$')+'0'; if(v>=1000) return (currencySymbols[currency]||'$')+(v/1000).toFixed(2)+'k'; return (currencySymbols[currency]||'$')+v.toFixed(2); };
+const fmtNum = v => v==null?'—':v>=1000?(v/1000).toFixed(1)+'k':String(v);
+
+const STEAM_IMG = url => {
+  if (!url) return null;
+  if (url.startsWith('__github__')) return url.slice(10); // ByMykel GitHub image URL
+  if (url.startsWith('http')) return url;                  // already a full URL
+  return `https://community.cloudflare.steamstatic.com/economy/image/${url}/128x128`;
+};
+
+// On-demand icon fetch — called when an img fails to load
+// Hits /api/icon/:mhn, gets the Steam hash, updates the img src in place
+const _iconFetchCache = {}; // mhn -> promise, to avoid duplicate requests
+async function fetchAndSetIcon(imgEl, mhn) {
+  if (!mhn || _iconFetchCache[mhn] === 'done' || _iconFetchCache[mhn] === 'miss') return;
+  if (_iconFetchCache[mhn]) { // already in flight
+    const url = await _iconFetchCache[mhn];
+    if (url && imgEl.isConnected) { imgEl.src = STEAM_IMG(url); imgEl.style.display = ''; }
+    return;
+  }
+  _iconFetchCache[mhn] = api('GET', '/api/icon/' + encodeURIComponent(mhn))
+    .then(d => d.url || null)
+    .catch(() => null);
+  const url = await _iconFetchCache[mhn];
+  _iconFetchCache[mhn] = url ? 'done' : 'miss';
+  if (url && imgEl.isConnected) { imgEl.src = STEAM_IMG(url); imgEl.style.display = ''; }
+}
+
+// Fixed palette of hues to pick from when adding a new group
+const COLOR_PALETTE = [
+  '#5d7cfc','#3ed598','#f5c542','#f08050','#c084fc',
+  '#f04f4f','#2dd4bf','#f472b6','#38bdf8','#a3e635',
+  '#fb923c','#e879f9','#4ade80','#facc15','#f87171',
+  '#60a5fa','#34d399','#a78bfa','#fbbf24','#f43f5e',
+];
+
+// Generate a CSS class-safe border/bg style object from a hex colour
+function markStyle(hex, bg=false) {
+  if (!hex) return {};
+  // Convert hex to rgb for rgba usage
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  if (bg) return { borderColor: hex, background: `rgba(${r},${g},${b},.09)` };
+  return { borderColor: hex };
+}
+
+function StatusDot({status}) {
+  const cls = status==='gc_ready'?'dot-on':status==='connecting'?'dot-conn':'dot-off';
+  return <span className={`u-dot ${cls}`} title={status}/>;
+}
+
+/* ── LOGIN ── */
+function LoginPage({onLogin}) {
+  const [tab,setTab]=useState('qr');
+  const [form,setForm]=useState({username:'',password:'',sharedSecret:''});
+  const [loading,setLoading]=useState(false);
+  const [error,setError]=useState(null);
+  const [needsCode,setNeedsCode]=useState(null);
+  const [code,setCode]=useState('');
+  const [qrUrl,setQrUrl]=useState(null);
+  const [qrScanned,setQrScanned]=useState(false);
+  const [qrStarted,setQrStarted]=useState(false);
+  const [autoConnecting,setAutoConnecting]=useState(false);
+  const [logs,setLogs]=useState([]);
+  const qrRef=useRef(null);
+  const pendingQrUrl=useRef(null);
+
+  const qrCallbackRef=useCallback(node=>{
+    qrRef.current=node;
+    if(node&&pendingQrUrl.current){
+      node.innerHTML='';
+      new QRCode(node,{text:pendingQrUrl.current,width:180,height:180,colorDark:'#ffffff',colorLight:'#181c28'});
+    }
+  },[]);
+
+  useEffect(()=>{
+    api('GET','/api/state').then(s=>{
+      // Server may already be connecting (auto-resume on start) or even gc_ready
+      if(s.status==='gc_ready') { onLogin(s); return; }
+      if(s.status==='connecting'||s.status==='connected') { setAutoConnecting(true); setLoading(true); }
+    });
+  },[]);
+
+  useEffect(()=>{
+    const es=new EventSource('/api/events');
+    const addLog=m=>setLogs(l=>[...l.slice(-49),m]);
+    es.addEventListener('log',e=>addLog(JSON.parse(e.data).msg));
+    es.addEventListener('qr_url',e=>{
+      const d=JSON.parse(e.data);
+      pendingQrUrl.current=d.url;
+      setQrUrl(d.url); setQrScanned(false);
+      if(qrRef.current){ qrRef.current.innerHTML=''; new QRCode(qrRef.current,{text:d.url,width:180,height:180,colorDark:'#ffffff',colorLight:'#181c28'}); }
+    });
+    es.addEventListener('qr_scanned',()=>setQrScanned(true));
+    es.addEventListener('state',e=>{
+      const d=JSON.parse(e.data);
+      if(d.status==='gc_ready') onLogin(d);
+      if(d.status==='connecting'||d.status==='connected') { setAutoConnecting(true); setLoading(true); }
+      if(d.needsAuthCode){ setNeedsCode(d.needsAuthCode); setLoading(false); setAutoConnecting(false); }
+    });
+    es.addEventListener('error',e=>{ try{ setError(JSON.parse(e.data).message); setLoading(false); setAutoConnecting(false); }catch(ex){} });
+    return()=>es.close();
+  },[]);
+
+  const startQR=async()=>{ setQrStarted(true); setError(null); const r=await api('POST','/api/qr-start'); if(r.error){setError(r.error);setQrStarted(false);} };
+  const submitPw=async()=>{ setLoading(true); setError(null); const r=await api('POST','/api/login',{...form,code:needsCode?code:undefined}); if(r.error){setError(r.error);setLoading(false);}else if(r.needsCode){setNeedsCode(r.needsCode);setLoading(false);} };
+
+  return (
+    <div className="login-layout">
+      <div className="login-card">
+        <div className="login-logo">CS2 Vault</div>
+        <div className="login-sub">Sign in with your Steam account</div>
+        {error&&<div className="alert alert-red">{error}<button className="alert-close" onClick={()=>setError(null)}>✕</button></div>}
+        {autoConnecting&&(
+          <div className="alert alert-blue" style={{marginBottom:12,flexDirection:'column',alignItems:'flex-start',gap:4}}>
+            <div style={{display:'flex',alignItems:'center',gap:8}}><span className="spinner"/><strong>Auto-connecting saved session…</strong></div>
+            <div style={{fontSize:11,color:'var(--sub)'}}>This usually takes 5–15 seconds.</div>
+          </div>
+        )}
+        {!autoConnecting&&<>
+          <div className="tab-row">
+            <button className={`tab-btn${tab==='qr'?' active':''}`} onClick={()=>setTab('qr')}>QR Login</button>
+            <button className={`tab-btn${tab==='pw'?' active':''}`} onClick={()=>setTab('pw')}>Password</button>
+          </div>
+          {tab==='qr'&&(!qrStarted
+            ?<button className="btn btn-primary btn-full" onClick={startQR}>Show QR Code</button>
+            :<div className="qr-wrap">{qrUrl?<><div ref={qrCallbackRef}/><div className={`qr-status${qrScanned?' qr-scanned':''}`}>{qrScanned?'✓ Scanned — confirm in app':'Scan with Steam mobile app'}</div></>:<div className="qr-status"><span className="spinner"/> Generating…</div>}</div>
+          )}
+          {tab==='pw'&&(needsCode
+            ?<><div className="form-group"><label className="form-label">{needsCode==='email'?'Email':'2FA'} Code</label><input className="form-input" value={code} onChange={e=>setCode(e.target.value)} onKeyDown={e=>e.key==='Enter'&&submitPw()} autoFocus/></div><button className="btn btn-primary btn-full" onClick={submitPw} disabled={loading}>{loading?<><span className="spinner"/> Verifying…</>:'Verify'}</button></>
+            :<><div className="form-group"><label className="form-label">Username</label><input className="form-input" value={form.username} onChange={e=>setForm(f=>({...f,username:e.target.value}))}/></div><div className="form-group"><label className="form-label">Password</label><input className="form-input" type="password" value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&submitPw()}/></div><div className="form-group"><label className="form-label">2FA Secret <span style={{fontWeight:400,textTransform:'none'}}>(optional)</span></label><input className="form-input" value={form.sharedSecret} onChange={e=>setForm(f=>({...f,sharedSecret:e.target.value}))} placeholder="base64"/><div className="form-hint">Auto-generates codes if provided.</div></div><button className="btn btn-primary btn-full" onClick={submitPw} disabled={loading}>{loading?<><span className="spinner"/> Signing in…</>:'Sign In'}</button></>
+          )}
+        </>}
+        {logs.length>0&&<div style={{marginTop:12}}><div className="log-lines" style={{background:'var(--card)',borderRadius:'var(--r)',padding:'6px 10px'}}>{logs.slice(-5).map((l,i)=><div key={i} className={l.includes('✓')?'log-ok':l.includes('error')||l.includes('Error')?'log-err':l.includes('[GC]')?'log-gc':'log-line'}>{l}</div>)}</div></div>}
+      </div>
+    </div>
+  );
+}
+
+/* ── LOG BOX ── */
+function LogBox({logs,show,onToggle}) {
+  const ref=useRef(null);
+  useEffect(()=>{ if(ref.current) ref.current.scrollTop=ref.current.scrollHeight; },[logs]);
+  return (
+    <div className="log-panel">
+      <div className="log-header" onClick={onToggle}>
+        <span className="log-title">● Activity Log</span>
+        <span style={{fontSize:11,color:'var(--dim)'}}>{show?'▲':'▼'}</span>
+      </div>
+      {show&&<div className="log-lines" ref={ref}>{logs.length===0?<div className="log-line">Waiting…</div>:logs.map((l,i)=><div key={i} className={l.includes('✓')?'log-ok':l.includes('Error')||l.includes('error')?'log-err':l.includes('[GC]')?'log-gc':l.includes('warn')?'log-warn':'log-line'}>{l}</div>)}</div>}
+    </div>
+  );
+}
+
+/* ── ITEM CARD ── */
+const resolvedKits = {}; // kitId -> {name, iconUrl} — shared cache across cards
+
+function placeholderBg(name) {
+  if (!name) return 'var(--lift)';
+  const n = name.toLowerCase();
+  if (n.includes('sticker') || n.includes('autograph')) return 'rgba(93,124,252,.18)';
+  if (n.includes('case') || n.includes('capsule') || n.includes('package')) return 'rgba(245,197,66,.15)';
+  if (n.includes('charm') || n.includes('patch') || n.includes('graffiti')) return 'rgba(62,213,152,.15)';
+  if (n.includes('gloves') || n.includes('wraps') || n.includes('agent')) return 'rgba(155,124,252,.18)';
+  return 'rgba(255,255,255,.04)';
+}
+function placeholderLetter(name) {
+  if (!name) return '?';
+  return name.replace(/^(Sticker \| |Charm \| |★ |StatTrak™ )/,'').charAt(0).toUpperCase();
+}
+
+function ItemCard({row, selected, markColor, onClick, currency='USD'}) {
+  const [resolvedName, setResolvedName] = useState(null);
+  const [resolvedIcon, setResolvedIcon] = useState(null);
+
+  // Auto-resolve unknown sticker kit names
+  const kitMatch = row.name?.match(/^Sticker \| Unknown Kit (\d+)$/);
+  useEffect(() => {
+    if (!kitMatch) return;
+    const kitId = kitMatch[1];
+    if (resolvedKits[kitId]) { setResolvedName(resolvedKits[kitId].name); setResolvedIcon(resolvedKits[kitId].iconUrl); return; }
+    api('GET', `/api/resolve-sticker/${kitId}`).then(d => {
+      if (d.name) {
+        resolvedKits[kitId] = { name: d.name, iconUrl: d.iconUrl };
+        setResolvedName(d.name);
+        setResolvedIcon(d.iconUrl);
+      }
+    });
+  }, [row.name]);
+
+  const displayName = resolvedName || row.name;
+  const displayIcon = resolvedIcon || row.iconUrl;
+  const imgUrl = STEAM_IMG(displayIcon);
+  const markCls = markColor ? ` marked-${markColor}` : selected ? ' selected' : '';
+  return (
+    <div className={`icard${markCls}`} onClick={onClick}>
+      <div className="icard-img" style={!imgUrl ? {background:placeholderBg(displayName)} : {}}>
+        {imgUrl
+          ? <img src={imgUrl} alt={displayName} loading="lazy" onError={e=>{fetchAndSetIcon(e.target, row.mhn); e.target.style.display='none';e.target.nextSibling&&(e.target.nextSibling.style.display='flex');}}/>
+          : null}
+        <span className="no-img" style={{display:imgUrl?'none':'flex',alignItems:'center',justifyContent:'center',width:'100%',height:'100%',fontSize:24,fontWeight:700,color:'rgba(255,255,255,.28)',fontFamily:"'Syne',sans-serif"}}>
+          {placeholderLetter(displayName)}
+        </span>
+        {row.qty > 1 && <span className="icard-qty">×{row.qty}</span>}
+        {markColor && <span className="icard-mark-dot" style={{background:markColor}}/>}
+      </div>
+      <div className="icard-body">
+        <div className="icard-name">{kitMatch && !resolvedName ? <span style={{color:'var(--dim)',fontSize:10}}>⏳ {row.name}</span> : displayName}</div>
+        {row.wear && <div className="icard-wear">{row.wear}</div>}
+        <div className="icard-price">
+          {row.lowest != null ? fmt(row.lowest, currency) : row.error ? <span style={{color:'var(--red)',fontSize:10}}>error</span> : '—'}
+          {row.float != null && <span style={{fontSize:9,color:'var(--dim)',marginLeft:4,fontFamily:'DM Mono,monospace'}}>{row.float.toFixed(4)}</span>}
+        </div>
+      </div>
+      {selected && !markColor && <div className="icard-check">✓</div>}
+    </div>
+  );
+}
+
+/* ── ITEMS VIEW ── */
+function ItemsView({rows, currency}) {
+  const [search,setSearch]=useState('');
+  const [sort,setSort]=useState('total');
+  const [srcFilter,setSrcFilter]=useState('All');
+
+  const filtered = useMemo(()=>{
+    const t=search.toLowerCase();
+    return rows
+      .filter(r=>(!t||r.name.toLowerCase().includes(t)||(r.wear||'').toLowerCase().includes(t)||(r.storageName||'').toLowerCase().includes(t))&&(srcFilter==='All'||r.source===srcFilter))
+      .sort((a,b)=>{
+        if(sort==='name') return a.name.localeCompare(b.name);
+        if(sort==='wear') return (a.wear||'').localeCompare(b.wear||'');
+        if(sort==='price') return (b.lowest??-1)-(a.lowest??-1);
+        return (b.total??-1)-(a.total??-1);
+      });
+  },[rows,search,sort,srcFilter]);
+
+  const grandTotal = filtered.reduce((s,r)=>s+(r.total??0),0);
+
+  return (
+    <div>
+      <div className="toolbar">
+        <div className="search-wrap">
+          <span className="search-ico">⌕</span>
+          <input className="search-input" placeholder="Search items…" value={search} onChange={e=>setSearch(e.target.value)}/>
+        </div>
+        <div className="filter-grp">
+          {['All','Inventory','Storage Unit'].map(f=>(
+            <button key={f} className={`filter-btn${srcFilter===f?' active':''}`} onClick={()=>setSrcFilter(f)}>{f}</button>
+          ))}
+        </div>
+        <select className="select-wrap" value={sort} onChange={e=>setSort(e.target.value)}>
+          <option value="total">Sort: Total Value</option>
+          <option value="price">Sort: Unit Price</option>
+          <option value="name">Sort: Name</option>
+          <option value="wear">Sort: Wear</option>
+        </select>
+        <span className="count-lbl" style={{marginLeft:'auto'}}>{filtered.length} items · {fmtBig(grandTotal, currency)}</span>
+      </div>
+
+      {rows.length===0
+        ?<div className="empty-state"><h3>No items yet</h3><p>Go to Overview, load storage units, and fetch prices.</p></div>
+        :<div className="item-grid">
+          {filtered.map((r,i)=><ItemCard key={i} row={r} selected={false} markColor={null} onClick={()=>{}} currency={currency}/>)}
+        </div>
+      }
+    </div>
+  );
+}
+
+/* ── TRANSFER VIEW ── */
+function TransferView({storageUnits, rows, currency}) {
+  const [activeUnit, setActiveUnit] = useState(null);
+  const [search, setSearch] = useState('');
+  const [sort, setSort] = useState('name');
+  const [marks, setMarks] = useState({});       // itemId -> groupId (local colour groups only)
+  const [activeGroup, setActiveGroup] = useState(1);
+  const [colorGroups, setColorGroups] = useState([{id:1,hex:'#5d7cfc',name:'Group 1'},{id:2,hex:'#3ed598',name:'Group 2'}]);
+  const [nextId, setNextId] = useState(3);
+  const [filterGroup, setFilterGroup] = useState(null);
+  const [expanded, setExpanded] = useState({});
+  const [unitItems, setUnitItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [toast, setToast] = useState(null);
+  const [source, setSource] = useState('storage');
+  const [invItems, setInvItems] = useState([]);
+  const [invLoading, setInvLoading] = useState(false);
+  const [targetUnit, setTargetUnit] = useState(null);
+  const [deleteMode, setDeleteMode] = useState(null);
+  const [deleteSelected, setDeleteSelected] = useState(new Set());
+  const [showPalette, setShowPalette] = useState(false);
+  // Saved tradeups from server
+  const [savedTradeups, setSavedTradeups] = useState([]);
+  const [tradeupSection, setTradeupSection] = useState('collapsed'); // 'collapsed'|'expanded'
+  const [expandedTradeup, setExpandedTradeup] = useState(null);
+  const [transferringTradeup, setTransferringTradeup] = useState(null);
+
+  const loadedUnits = storageUnits.filter(u=>u.loaded);
+  useEffect(()=>{ if(!activeUnit && loadedUnits.length>0) setActiveUnit(loadedUnits[0].id); },[loadedUnits.length]);
+
+  // Load saved tradeups from server on mount
+  useEffect(()=>{
+    api('GET','/api/tradeups').then(d=>{ if(d.tradeups) setSavedTradeups(d.tradeups); });
+  },[]);
+
+  const fetchUnitItems = useCallback(async (unitId) => {
+    const d = await api('GET', `/api/storage-items/${unitId}?currency=${currency}`);
+    setUnitItems(d.items||[]);
+  }, [currency]);
+
+  useEffect(()=>{
+    if(!activeUnit) return;
+    setLoading(true);
+    fetchUnitItems(activeUnit).finally(()=>setLoading(false));
+  },[activeUnit, rows, fetchUnitItems]);
+
+  useEffect(() => {
+    if (!activeUnit) return;
+    let cancelled = false; let timer = null;
+    const poll = async () => {
+      try {
+        const p = await api('GET', '/api/icon-progress');
+        if (cancelled || p.error) return;
+        if (p.complete) { await fetchUnitItems(activeUnit); return; }
+      } catch(e) { return; }
+      if (!cancelled) timer = setTimeout(poll, 3000);
+    };
+    timer = setTimeout(poll, 3000);
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [activeUnit, fetchUnitItems]);
+
+  // Add a new colour group using the next unused palette colour
+  const addGroup = (hex) => {
+    const id = nextId;
+    setColorGroups(gs => [...gs, { id, hex, name: `Group ${id}` }]);
+    setNextId(n => n+1);
+    setActiveGroup(id);
+    setShowPalette(false);
+  };
+
+  // Delete flow
+  const startDelete = () => { setDeleteMode('selecting'); setDeleteSelected(new Set()); };
+  const cancelDelete = () => { setDeleteMode(null); setDeleteSelected(new Set()); };
+  const toggleDeleteSelect = (id) => setDeleteSelected(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  const confirmDelete = () => {
+    const ids = deleteSelected;
+    setColorGroups(gs => gs.filter(g => !ids.has(g.id)));
+    setMarks(m => { const n={...m}; Object.keys(n).forEach(k=>{ if(ids.has(n[k])) delete n[k]; }); return n; });
+    if (ids.has(activeGroup)) {
+      const remaining = colorGroups.filter(g=>!ids.has(g.id));
+      if (remaining.length) setActiveGroup(remaining[0].id);
+    }
+    if (ids.has(filterGroup)) setFilterGroup(null);
+    setDeleteMode(null);
+    setDeleteSelected(new Set());
+  };
+
+  const setGroupName = (id, name) => setColorGroups(gs => gs.map(g => g.id===id ? {...g,name} : g));
+
+  // Fetch inventory items when source switches
+  useEffect(() => {
+    if (source !== 'inventory') return;
+    setInvLoading(true);
+    api('GET', `/api/inventory-items?currency=${currency}`).then(d => setInvItems(d.items||[])).finally(() => setInvLoading(false));
+  }, [source, currency]);
+  useEffect(() => { setMarks({}); }, [source]);
+
+  const activeItems = source === 'inventory' ? invItems : unitItems;
+
+  // Group items by MHN
+  const groups = useMemo(() => {
+    const t = search.toLowerCase();
+    const filtered = activeItems.filter(r =>
+      !t || r.name.toLowerCase().includes(t) || (r.wear||'').toLowerCase().includes(t)
+    );
+    const byMhn = {};
+    filtered.forEach(r => {
+      const key = r.mhn;
+      if (!byMhn[key]) byMhn[key] = { mhn:r.mhn, name:r.name, wear:r.wear, iconUrl:r.iconUrl, lowest:r.lowest, items:[] };
+      byMhn[key].items.push(r);
+    });
+    const arr = Object.values(byMhn);
+    if (sort==='name')  arr.sort((a,b)=>a.name.localeCompare(b.name));
+    else if (sort==='price') arr.sort((a,b)=>(b.lowest??-1)-(a.lowest??-1));
+    else if (sort==='count') arr.sort((a,b)=>b.items.length-a.items.length);
+    else arr.sort((a,b)=>a.name.localeCompare(b.name));
+    arr.forEach(g => g.items.sort((a,b)=>(a.float??1)-(b.float??1)));
+    if (filterGroup !== null) return arr.filter(g => g.items.some(r => marks[r.id] === filterGroup));
+    return arr;
+  }, [activeItems, search, sort, filterGroup, marks]);
+
+  const toggleExpand = (mhn) => setExpanded(e => ({...e, [mhn]: !e[mhn]}));
+
+  const toggleMark = (item) => {
+    setMarks(m => {
+      const n = {...m};
+      if (n[item.id] === activeGroup) delete n[item.id];
+      else n[item.id] = activeGroup;
+      return n;
+    });
+  };
+
+
+  const markedGroups = useMemo(() => colorGroups.map(cg => {
+    const loadedItems = activeItems.filter(r => marks[r.id] === cg.id);
+    return { ...cg, items: loadedItems };
+  }).filter(g => g.items.length > 0), [activeItems, marks, colorGroups]);
+
+  const totalMarked = useMemo(() => activeItems.filter(r => marks[r.id]).length, [activeItems, marks]);
+
+  // Transfer out — moves items via GC
+  const [transferring, setTransferring] = useState(false);
+  const [transferProgress, setTransferProgress] = useState(null);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(null), 2800); };
+
+  const transferOut = async (items, sourceUnit) => {
+    if (!items.length) return;
+    const casketId = sourceUnit || activeUnit;
+    setTransferring(true);
+    setTransferProgress({ done:0, total:items.length, current:null, failed:0 });
+    let failed = 0;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      setTransferProgress({ done:i, total:items.length, current:item.name||item.mhn, failed });
+      try {
+        const r = await api('POST', '/api/transfer/remove', { casketId, itemId: item.id });
+        if (r.error) { failed++; }
+        else { setMarks(m => { const n={...m}; delete n[item.id]; return n; }); setUnitItems(u => u.filter(x => x.id !== item.id)); }
+      } catch(e) { failed++; }
+      await new Promise(r => setTimeout(r, 150));
+    }
+    setTransferProgress({ done:items.length, total:items.length, current:null, failed });
+    setTimeout(() => { setTransferring(false); setTransferProgress(null); }, 2000);
+    showToast(failed ? `Done — ${failed} failed` : `${items.length - failed} items moved to inventory`);
+  };
+
+  const transferIn = async (items) => {
+    const destUnit = targetUnit || loadedUnits[0]?.id;
+    if (!destUnit || !items.length) return;
+    setTransferring(true);
+    setTransferProgress({ done:0, total:items.length, current:null, failed:0, direction:'in' });
+    let failed = 0;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      setTransferProgress({ done:i, total:items.length, current:item.name||item.mhn, failed, direction:'in' });
+      try {
+        const r = await api('POST', '/api/transfer/add', { casketId: destUnit, itemId: item.id });
+        if (r.error) { failed++; }
+        else { setMarks(m => { const n={...m}; delete n[item.id]; return n; }); setInvItems(u => u.filter(x => x.id !== item.id)); }
+      } catch(e) { failed++; }
+      await new Promise(r => setTimeout(r, 150));
+    }
+    setTransferProgress({ done:items.length, total:items.length, current:null, failed, direction:'in' });
+    setTimeout(() => { setTransferring(false); setTransferProgress(null); }, 2000);
+    const unitName = loadedUnits.find(u=>u.id===destUnit)?.name || 'storage';
+    showToast(failed ? `Done — ${failed} failed` : `${items.length - failed} items moved to ${unitName}`);
+  };
+
+  // Transfer out a saved tradeup — items from their original unit
+  const transferTradeup = async (tradeup) => {
+    setTransferringTradeup(tradeup.id);
+    // Resolve which current items match the saved itemIds in this unit
+    const unitId = tradeup.unitId;
+    const d = await api('GET', `/api/storage-items/${unitId}?currency=${currency}`);
+    const unitItemsNow = d.items || [];
+    const idSet = new Set(tradeup.itemIds);
+    const toMove = unitItemsNow.filter(x => idSet.has(x.id));
+    if (!toMove.length) { showToast('No matching items found — they may have moved'); setTransferringTradeup(null); return; }
+    await transferOut(toMove, unitId);
+    setTransferringTradeup(null);
+  };
+
+  const deleteTradeup = async (id) => {
+    await api('DELETE', `/api/tradeups/${id}`);
+    setSavedTradeups(ts => ts.filter(t => t.id !== id));
+    if (expandedTradeup === id) setExpandedTradeup(null);
+  };
+
+  const copyToClipboard = (items) => {
+    const lines = items.map(r => `${r.name||r.mhn}${r.wear ? ' ('+r.wear+')' : ''}${r.float ? ' ['+r.float.toFixed(6)+']' : ''} — ID: ${r.id}`);
+    navigator.clipboard.writeText(lines.join('\n')).then(() => showToast(`${items.length} items copied`));
+  };
+
+  return (
+    <div>
+      {toast && <div className="toast">{toast}</div>}
+
+      {/* Transfer progress overlay */}
+      {transferring && transferProgress && (
+        <div style={{position:'fixed',inset:0,background:'rgba(0,0,0,.65)',zIndex:200,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{background:'var(--panel)',border:'1px solid var(--border2)',borderRadius:'var(--r2)',padding:'28px 32px',minWidth:320,textAlign:'center'}}>
+            <div style={{fontSize:15,fontWeight:700,marginBottom:14,fontFamily:"'Syne',sans-serif"}}>
+              {transferProgress?.direction==='in' ? 'Moving to storage…' : 'Transferring out…'}
+            </div>
+            <div style={{height:4,background:'var(--lift)',borderRadius:2,overflow:'hidden',marginBottom:12}}>
+              <div style={{height:'100%',background:'linear-gradient(90deg,var(--green),var(--accent))',borderRadius:2,transition:'width .3s',width:`${transferProgress.total?Math.round(transferProgress.done/transferProgress.total*100):0}%`}}/>
+            </div>
+            <div style={{fontSize:12,color:'var(--sub)',fontFamily:'DM Mono,monospace',marginBottom:6}}>
+              {transferProgress.done} / {transferProgress.total}
+              {transferProgress.failed > 0 && <span style={{color:'var(--red)',marginLeft:8}}>{transferProgress.failed} failed</span>}
+            </div>
+            {transferProgress.current && <div style={{fontSize:11,color:'var(--dim)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:260}}>{transferProgress.current}</div>}
+            {transferProgress.done === transferProgress.total && <div style={{marginTop:10,color:'var(--green)',fontSize:13,fontWeight:600}}>Done ✓</div>}
+          </div>
+        </div>
+      )}
+
+      {/* ── Saved Tradeups section ── */}
+      {savedTradeups.length > 0 && (
+        <div style={{marginBottom:16,background:'var(--panel)',border:'1px solid var(--border)',borderRadius:'var(--r2)',overflow:'hidden'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,padding:'10px 14px',cursor:'pointer',borderBottom: tradeupSection==='expanded'?'1px solid var(--border)':'none'}}
+            onClick={()=>setTradeupSection(s=>s==='expanded'?'collapsed':'expanded')}>
+            <span style={{fontSize:14}}>⚗</span>
+            <span style={{fontWeight:600,fontSize:13}}>Saved Tradeups</span>
+            <span style={{background:'rgba(93,124,252,.15)',color:'var(--accent)',fontSize:11,fontWeight:700,padding:'1px 7px',borderRadius:10,fontFamily:'DM Mono,monospace'}}>{savedTradeups.length}</span>
+            <span style={{marginLeft:'auto',fontSize:11,color:'var(--dim)'}}>{tradeupSection==='expanded'?'▲':'▼'}</span>
+          </div>
+          {tradeupSection==='expanded' && (
+            <div style={{padding:10,display:'flex',flexDirection:'column',gap:6}}>
+              {savedTradeups.map(t => {
+                const isExp = expandedTradeup === t.id;
+                const unitName = storageUnits.find(u=>u.id===t.unitId)?.name || t.unitName || 'Unknown Unit';
+                const unitLoaded = storageUnits.find(u=>u.id===t.unitId)?.loaded;
+                return (
+                  <div key={t.id} style={{background:'var(--card)',border:'1px solid var(--border)',borderRadius:'var(--r)',overflow:'hidden'}}>
+                    <div style={{display:'flex',alignItems:'center',gap:9,padding:'9px 12px',cursor:'pointer'}}
+                      onClick={()=>setExpandedTradeup(isExp?null:t.id)}>
+                      <span style={{width:10,height:10,borderRadius:'50%',background:t.hex,flexShrink:0,display:'inline-block'}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:13,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{t.name}</div>
+                        <div style={{fontSize:11,color:'var(--dim)',fontFamily:'DM Mono,monospace'}}>
+                          {t.itemIds.length} items · {unitName}
+                          {!unitLoaded && <span style={{color:'var(--orange)',marginLeft:6}}>unit not loaded</span>}
+                        </div>
+                      </div>
+                      <button onClick={e=>{e.stopPropagation();transferTradeup(t);}} disabled={!unitLoaded||transferring||transferringTradeup===t.id}
+                        style={{padding:'3px 10px',borderRadius:5,border:'1px solid rgba(62,213,152,.3)',fontSize:11,fontWeight:600,cursor:(!unitLoaded||transferring)?'not-allowed':'pointer',
+                          background:'rgba(62,213,152,.1)',color:'var(--green)',opacity:(!unitLoaded||transferring)?.45:1,flexShrink:0}}>
+                        {transferringTradeup===t.id?<span className="spinner"/>:'↑ Transfer Out'}
+                      </button>
+                      <button onClick={e=>{e.stopPropagation();deleteTradeup(t.id);}} title="Delete tradeup"
+                        style={{background:'none',border:'none',color:'var(--dim)',cursor:'pointer',fontSize:14,padding:'0 3px',flexShrink:0}}>✕</button>
+                      <span style={{color:'var(--dim)',fontSize:11,flexShrink:0}}>{isExp?'▾':'▸'}</span>
+                    </div>
+                    {isExp && (
+                      <div style={{borderTop:'1px solid var(--border)',padding:'8px 12px'}}>
+                        {/* Outcomes summary */}
+                        {t.outcomes && t.outcomes.length > 0 && (
+                          <div style={{marginBottom:10}}>
+                            <div style={{fontSize:10,fontWeight:700,color:'var(--dim)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Possible Outcomes</div>
+                            <div style={{display:'flex',flexDirection:'column',gap:4}}>
+                              {t.outcomes.slice(0,4).map((o,i)=>{
+                                const wc={'Factory New':'#3ed598','Minimal Wear':'#5d7cfc','Field-Tested':'#f5c542','Well-Worn':'#f08050','Battle-Scarred':'#f0506e'}[o.item_wear_name]||'var(--sub)';
+                                return (
+                                  <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 0',borderBottom:'1px solid var(--border)'}}>
+                                    {o.image && <img src={o.image} style={{width:36,height:27,objectFit:'contain',flexShrink:0}} onError={e=>e.target.style.display='none'}/>}
+                                    <div style={{flex:1,minWidth:0}}>
+                                      <div style={{fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{o.item_name}</div>
+                                      <span style={{fontSize:10,color:wc,fontWeight:600}}>{o.item_wear_name}</span>
+                                      <span style={{fontSize:10,color:'var(--dim)',marginLeft:6,fontFamily:'DM Mono,monospace'}}>{o.float_chance?.toFixed(5)}</span>
+                                    </div>
+                                    <span style={{fontFamily:'DM Mono,monospace',fontSize:13,fontWeight:700,color:'var(--text)',flexShrink:0}}>{o.percentage}%</span>
+                                  </div>
+                                );
+                              })}
+                              {t.outcomes.length > 4 && <div style={{fontSize:11,color:'var(--dim)',textAlign:'center',padding:'3px 0'}}>+{t.outcomes.length-4} more outcomes</div>}
+                            </div>
+                          </div>
+                        )}
+                        {/* Item list */}
+                        <div style={{fontSize:10,fontWeight:700,color:'var(--dim)',textTransform:'uppercase',letterSpacing:'.06em',marginBottom:6}}>Input Items ({t.itemIds.length})</div>
+                        <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                          {(t.itemSnapshots||[]).map((s,i)=>(
+                            <div key={i} style={{display:'flex',alignItems:'center',gap:8,fontSize:11,padding:'2px 0',borderBottom:'1px solid var(--border)'}}>
+                              <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:'var(--text)'}}>
+                                {s.name||s.mhn}
+                                {s.wear && <span style={{color:'var(--dim)',marginLeft:4,fontSize:10}}>{s.wear.replace('Factory New','FN').replace('Minimal Wear','MW').replace('Field-Tested','FT').replace('Well-Worn','WW').replace('Battle-Scarred','BS')}</span>}
+                              </span>
+                              {s.float!=null && <span style={{fontFamily:'DM Mono,monospace',color:'var(--sub)',fontSize:10,flexShrink:0}}>{s.float.toFixed(5)}</span>}
+                            </div>
+                          ))}
+                          {(!t.itemSnapshots||t.itemSnapshots.length===0) && <div style={{fontSize:11,color:'var(--dim)'}}>{t.itemIds.length} item IDs saved (no snapshots)</div>}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Source toggle + unit tabs ── */}
+      <div className="unit-tabs" style={{marginBottom:8}}>
+        <button className={`unit-tab${source==='storage'?' active':''}`} onClick={()=>setSource('storage')}>
+          <span style={{fontSize:11}}>📦</span> Storage Unit
+        </button>
+        <button className={`unit-tab${source==='inventory'?' active':''}`} onClick={()=>setSource('inventory')}>
+          <span style={{fontSize:11}}>🎒</span> Inventory
+          {invItems.length>0 && <span className="tab-count">{invItems.length}</span>}
+        </button>
+        {source==='storage' && loadedUnits.length>0 && <span style={{color:'var(--border2)',alignSelf:'center',margin:'0 2px'}}>|</span>}
+        {source==='storage' && loadedUnits.map(u=>(
+          <button key={u.id} className={`unit-tab loaded${activeUnit===u.id?' active':''}`} onClick={()=>setActiveUnit(u.id)}>
+            <span className="tab-dot"/>
+            {u.name}
+            <span className="tab-count">{u.itemCount}</span>
+          </button>
+        ))}
+        {source==='storage' && loadedUnits.length===0 && (
+          <span style={{color:'var(--sub)',fontSize:12,alignSelf:'center',marginLeft:4}}>No loaded units — load them in Overview first</span>
+        )}
+      </div>
+
+      {/* Inventory: destination picker */}
+      {source==='inventory' && loadedUnits.length>0 && (
+        <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10,fontSize:12}}>
+          <span style={{color:'var(--sub)'}}>Move to:</span>
+          {loadedUnits.map(u=>(
+            <button key={u.id} onClick={()=>setTargetUnit(u.id)}
+              style={{padding:'3px 10px',borderRadius:5,border:'1px solid',fontSize:12,cursor:'pointer',
+                borderColor:(targetUnit||loadedUnits[0]?.id)===u.id?'var(--accent)':'var(--border)',
+                background:(targetUnit||loadedUnits[0]?.id)===u.id?'rgba(93,124,252,.15)':'transparent',
+                color:(targetUnit||loadedUnits[0]?.id)===u.id?'var(--accent)':'var(--sub)'}}>
+              {u.name}
+            </button>
+          ))}
+        </div>
+      )}
+      {source==='inventory' && loadedUnits.length===0 && (
+        <div style={{marginBottom:10,padding:'8px 12px',background:'rgba(240,80,110,.08)',border:'1px solid rgba(240,80,110,.2)',borderRadius:6,fontSize:12,color:'var(--sub)'}}>
+          Load a storage unit in Overview first to move items into it.
+        </div>
+      )}
+
+      {(activeUnit || source==='inventory') && (
+        <div style={{display:'grid',gridTemplateColumns:'1fr 266px',gap:14,alignItems:'start'}}>
+          <div>
+            {/* Mark bar */}
+            <div className="mark-bar" style={{position:'relative'}}>
+              <span className="mark-label">Mark:</span>
+              {colorGroups.map(cg => {
+                const isActive = activeGroup === cg.id;
+                const isDeleteSel = deleteSelected.has(cg.id);
+                return (
+                  <button key={cg.id}
+                    className={`mark-btn${isActive && deleteMode===null?' active-mark':''}`}
+                    style={{background: cg.hex, outline: isDeleteSel ? '2px solid var(--red)' : undefined, opacity: deleteMode==='selecting' && !isDeleteSel ? 0.45 : 1}}
+                    title={cg.name}
+                    onClick={()=>{ if (deleteMode==='selecting') toggleDeleteSelect(cg.id); else setActiveGroup(cg.id); }}
+                  />
+                );
+              })}
+              {deleteMode === null && (
+                <div style={{position:'relative'}}>
+                  <button className="mark-clear" style={{fontSize:14,padding:'1px 7px',lineHeight:1}} onClick={()=>setShowPalette(p=>!p)} title="Add colour group">+</button>
+                  {showPalette && (
+                    <div style={{position:'absolute',top:'calc(100% + 6px)',left:0,background:'var(--panel)',border:'1px solid var(--border2)',borderRadius:'var(--r)',padding:8,display:'grid',gridTemplateColumns:'repeat(5,22px)',gap:5,zIndex:50,boxShadow:'0 8px 24px rgba(0,0,0,.4)'}}>
+                      {COLOR_PALETTE.map(hex => (
+                        <button key={hex} onClick={()=>addGroup(hex)} style={{width:22,height:22,borderRadius:'50%',background:hex,border:'2px solid transparent',cursor:'pointer',transition:'transform .1s'}} onMouseEnter={e=>e.target.style.transform='scale(1.2)'} onMouseLeave={e=>e.target.style.transform='scale(1)'}/>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {colorGroups.length > 1 && deleteMode === null && (
+                <button className="mark-clear" style={{fontSize:12,padding:'1px 7px'}} onClick={startDelete} title="Remove colour groups">−</button>
+              )}
+              {deleteMode === 'selecting' && <>
+                <span style={{fontSize:11,color:'var(--orange)',marginLeft:4}}>Select groups to remove</span>
+                {deleteSelected.size > 0 && <button className="btn btn-danger" style={{padding:'2px 9px',fontSize:11}} onClick={()=>setDeleteMode('confirming')}>Remove {deleteSelected.size}</button>}
+                <button className="mark-clear" onClick={cancelDelete}>Cancel</button>
+              </>}
+              {deleteMode === 'confirming' && (
+                <div style={{display:'flex',alignItems:'center',gap:7,flex:1}}>
+                  <span style={{fontSize:11,color:'var(--red)'}}>Delete {deleteSelected.size} group{deleteSelected.size>1?'s':''}?</span>
+                  <button className="btn btn-danger" style={{padding:'2px 9px',fontSize:11}} onClick={confirmDelete}>Yes</button>
+                  <button className="mark-clear" onClick={cancelDelete}>Cancel</button>
+                </div>
+              )}
+              {deleteMode === null && <>
+                <span style={{color:'var(--dim)',fontSize:12,margin:'0 2px'}}>|</span>
+                <button className={`filter-btn${filterGroup===null?' active':''}`} style={{padding:'2px 8px',fontSize:11}} onClick={()=>setFilterGroup(null)}>All</button>
+                {colorGroups.map(cg=>(
+                  <button key={cg.id} className={`filter-btn${filterGroup===cg.id?' active':''}`}
+                    style={{padding:'2px 8px',fontSize:11,borderColor:filterGroup===cg.id?cg.hex:'var(--border)',color:filterGroup===cg.id?cg.hex:'var(--sub)'}}
+                    onClick={()=>setFilterGroup(f=>f===cg.id?null:cg.id)}>
+                    <span style={{display:'inline-block',width:7,height:7,borderRadius:'50%',background:cg.hex,marginRight:4}}/>
+                  </button>
+                ))}
+                {totalMarked > 0 && <>
+                  <button className="btn btn-ghost" style={{padding:'2px 9px',fontSize:11,marginLeft:'auto'}}
+                    onClick={()=>copyToClipboard(activeItems.filter(r=>marks[r.id]))}>⎘ Copy {totalMarked}</button>
+                  <button className="mark-clear" onClick={()=>setMarks({})}>✕ Clear</button>
+                </>}
+              </>}
+            </div>
+
+            {/* Toolbar */}
+            <div className="toolbar" style={{marginBottom:10}}>
+              <div className="search-wrap">
+                <span className="search-ico">⌕</span>
+                <input className="search-input" placeholder="Search…" value={search} onChange={e=>setSearch(e.target.value)}/>
+              </div>
+              <select className="select-wrap" value={sort} onChange={e=>setSort(e.target.value)}>
+                <option value="name">Name</option>
+                <option value="price">Price</option>
+                <option value="count">Count</option>
+              </select>
+              <span className="count-lbl" style={{marginLeft:'auto'}}>
+                {(loading||invLoading) ? <span className="spinner" style={{marginRight:4}}/> : null}
+                {groups.length} groups · {activeItems.length} items
+              </span>
+            </div>
+
+            {/* Grouped item rows */}
+            {groups.length === 0
+              ? <div className="empty-state" style={{padding:'40px 20px'}}><p>{filterGroup!=null?'No marked items here.':source==='inventory'?'No inventory items.':'No items in this unit.'}</p></div>
+              : groups.map(g => {
+                  const isOpen = !!expanded[g.mhn];
+                  const imgUrl = STEAM_IMG(g.iconUrl);
+                  const markedInGroup = g.items.filter(r=>marks[r.id]).length;
+                  return (
+                    <div key={g.mhn} className="tgroup">
+                      <div className="tgroup-header" onClick={()=>toggleExpand(g.mhn)}>
+                        {imgUrl
+                          ? <div className="tgroup-img"><img src={imgUrl} alt={g.name} loading="lazy" onError={e=>{fetchAndSetIcon(e.target, g.mhn); e.target.parentNode.style.display='none';}}/></div>
+                          : null}
+                        <div className="tgroup-placeholder" style={{display:imgUrl?'none':'flex',background:placeholderBg(g.name)}}>{placeholderLetter(g.name)}</div>
+                        <div className="tgroup-info">
+                          <div className="tgroup-name">{g.name}</div>
+                          {g.wear && <div className="tgroup-wear">{g.wear}</div>}
+                        </div>
+                        {markedInGroup > 0 && <span style={{fontSize:9,padding:'1px 5px',borderRadius:4,background:'rgba(255,255,255,.08)',color:'var(--sub)',fontFamily:'DM Mono,monospace'}}>{markedInGroup} marked</span>}
+                        <span className="tgroup-count">×{g.items.length}</span>
+                        <span className={`tgroup-expand${isOpen?' open':''}`}>▶</span>
+                      </div>
+                      {isOpen && (
+                        <div>
+                          {(() => {
+                            const allMarked = g.items.every(r => marks[r.id] === activeGroup);
+                            const anyMarked = g.items.some(r => marks[r.id] === activeGroup);
+                            return (
+                              <div style={{display:'flex',alignItems:'center',gap:6,padding:'4px 10px 2px',borderTop:'1px solid var(--border)'}}>
+                                <button onClick={()=>{ setMarks(m=>{ const n={...m}; if(allMarked) g.items.forEach(r=>{ if(n[r.id]===activeGroup) delete n[r.id]; }); else g.items.forEach(r=>{ n[r.id]=activeGroup; }); return n; }); }}
+                                  style={{fontSize:10,padding:'2px 8px',borderRadius:4,border:'1px solid var(--border)',
+                                    background: allMarked?'rgba(93,124,252,.15)':anyMarked?'rgba(93,124,252,.08)':'transparent',
+                                    color: allMarked?'var(--accent)':'var(--sub)',cursor:'pointer',fontFamily:'DM Mono,monospace'}}>
+                                  {allMarked ? '✓ All' : anyMarked ? `~${g.items.filter(r=>marks[r.id]===activeGroup).length}/${g.items.length}` : 'All'}
+                                </button>
+                                <span style={{fontSize:10,color:'var(--dim)'}}>{g.items.length} item{g.items.length!==1?'s':''}</span>
+                              </div>
+                            );
+                          })()}
+                          <div className="tgroup-subitems">
+                            {g.items.map(item => {
+                              const gid = marks[item.id];
+                              const gcol = gid ? colorGroups.find(c=>c.id===gid) : null;
+                              return (
+                                <div key={item.id} className="tsubcard" style={gcol ? markStyle(gcol.hex, true) : {}} onClick={()=>toggleMark(item)}>
+                                  {gcol && <span className="tsubcard-dot" style={{background:gcol.hex}}/>}
+                                  <div className="tsubcard-float">{item.float!=null?item.float.toFixed(6):'—'}</div>
+                                  {item.lowest != null && <div className="tsubcard-price">${item.lowest.toFixed(2)}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+            }
+          </div>
+
+          {/* Right panel — Transfer Groups */}
+          <div>
+            <div className="marked-panel">
+              <div className="marked-header">
+                <span className="marked-title">Transfer Groups</span>
+                <span style={{marginLeft:'auto',fontSize:11,fontFamily:'DM Mono,monospace',color:'var(--sub)'}}>{totalMarked} marked</span>
+              </div>
+              {markedGroups.length === 0
+                ? <div style={{padding:'20px 14px',fontSize:12,color:'var(--dim)',textAlign:'center',lineHeight:1.8}}>
+                    Expand a group and click<br/>items to mark them.
+                    <div style={{fontSize:10,marginTop:6,opacity:.6}}>Use colour groups to plan<br/>tradeups, float sets, etc.</div>
+                  </div>
+                : <div className="marked-groups">
+                    {markedGroups.map(g=>(
+                      <div key={g.id} className="marked-group">
+                        <div className="marked-group-header">
+                          <span className="marked-group-dot" style={{background:g.hex}}/>
+                          <input className="mark-name-input" value={g.name} onClick={e=>e.stopPropagation()} onChange={e=>setGroupName(g.id, e.target.value)}/>
+                          <span className="marked-group-count">{g.items.length}</span>
+                          <button onClick={()=>{ setMarks(m=>{ const n={...m}; Object.keys(n).forEach(k=>{ if(n[k]===g.id) delete n[k]; }); return n; }); }} style={{background:'none',border:'none',color:'var(--dim)',cursor:'pointer',fontSize:11,padding:'0 2px'}} title="Clear marks">✕</button>
+                        </div>
+                        <div className="marked-group-items">
+                          {g.items.map((r,i)=>(
+                            <span key={i} className="marked-item-chip" title={`${r.name}${r.wear?' ('+r.wear+')':''}`}>
+                              {r.name.replace('StatTrak™ ','ST ').split(' | ').pop()}
+                            </span>
+                          ))}
+                        </div>
+                        <button className="btn btn-ghost" style={{width:'100%',marginTop:7,fontSize:11,padding:'4px'}}
+                          onClick={()=>copyToClipboard(g.items)}>
+                          ⎘ Copy {g.items.length} IDs
+                        </button>
+                        <button className="btn btn-green" style={{width:'100%',marginTop:4,fontSize:11,padding:'4px'}}
+                          disabled={transferring}
+                          onClick={()=>source==='inventory' ? transferIn(g.items) : transferOut(g.items, activeUnit)}>
+                          {source==='inventory' ? '⇤ Move to storage' : '↑ Transfer Out'} ({g.items.length})
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+              }
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+/* ── DASHBOARD ── */
+function Dashboard({user,onLogout}) {
+  const [status,setStatus]=useState('gc_ready');
+  const [storageUnits,setStorageUnits]=useState([]);
+  const [loadingStorage,setLoadingStorage]=useState(false);
+  const [rows,setRows]=useState([]);
+  const [fetching,setFetching]=useState(false);
+  const [progress,setProgress]=useState(null);
+  const [error,setError]=useState(null);
+  const [msg,setMsg]=useState(null);
+  const [logs,setLogs]=useState([]);
+  const [showLog,setShowLog]=useState(false);
+  const [search,setSearch]=useState('');
+  const [srcFilter,setSrcFilter]=useState('All');
+  const [sortKey,setSortKey]=useState('total');
+  const [sortDir,setSortDir]=useState('desc');
+  const [inventoryCount,setInventoryCount]=useState(0);
+  const [nav,setNav]=useState('overview');
+  const [iconProg,setIconProg]=useState(null);
+  const [iconCacheCount, setIconCacheCount] = useState(0);
+  const [currency, setCurrency] = useState('USD');
+  const [currencySymbol, setCurrencySymbol] = useState('$');
+  const [priceRateLimit, setPriceRateLimit] = useState(false);
+
+  // Load currency on mount
+  useEffect(()=>{ api('GET','/api/currency').then(d=>{ if(d.currency){ setCurrency(d.currency); setCurrencySymbol(d.symbol||'$'); } }); },[]);
+
+  const setCurrencyPref = async (c) => {
+    const r = await api('POST','/api/currency',{currency:c});
+    if(r.ok){
+      setCurrency(c);
+      setCurrencySymbol(r.symbol);
+      const v = await api('GET', `/api/valuation?currency=${c}`);
+      if (v.rows) setRows(v.rows);
+    }
+  };
+
+  const fetchIcons = async () => {
+    const r = await api('POST', '/api/fetch-icons');
+    if (r.ok) {
+      // Start polling — reset iconProg to force popup to appear
+      setIconProg({ done: 0, total: 1, complete: false });
+    }
+  };
+
+  // Track icon cache size from progress updates
+  useEffect(() => {
+    if (iconProg?.complete && iconProg?.total > 0) setIconCacheCount(iconProg.total);
+  }, [iconProg]); // null | {done,total,complete}
+
+  // Global icon-fetch progress polling (drives the floating popup)
+  useEffect(()=>{
+    let cancelled=false; let timer=null;
+    const poll=async()=>{
+      try {
+        const p=await api('GET','/api/icon-progress');
+        if(cancelled) return;
+        setIconProg(p);
+        if(!p.complete) { timer=setTimeout(poll,1500); }
+        else { timer=setTimeout(()=>setIconProg(null),4000); }
+      } catch(e) { /* silent */ }
+    };
+    poll();
+    return()=>{ cancelled=true; if(timer) clearTimeout(timer); };
+  },[]);
+
+  // Fetch initial state + valuation on mount (runs once)
+  useEffect(()=>{
+    const applyState=s=>{ if(!s) return; setStatus(s.status); setInventoryCount(s.inventoryCount||0); if(s.storageUnits?.length) setStorageUnits(s.storageUnits.map(u=>({...u,loaded:!!u.loaded}))); };
+    api('GET','/api/state').then(applyState);
+    api('GET',`/api/valuation?currency=USD`).then(d=>{ if(d.rows?.length){ setRows(d.rows); if(d.currency) setCurrency(d.currency); if(d.symbol) setCurrencySymbol(d.symbol); setMsg(`Loaded ${d.cachedPrices} cached prices`); } });
+    const es=new EventSource('/api/events');
+    const addLog=m=>setLogs(l=>[...l.slice(-99),m]);
+    es.addEventListener('log',e=>addLog(JSON.parse(e.data).msg));
+    es.addEventListener('state',e=>{ const d=JSON.parse(e.data); setStatus(d.status); setInventoryCount(d.inventoryCount||0); if(d.storageUnits?.length) setStorageUnits(prev=>{ const pm=Object.fromEntries(prev.map(u=>[u.id,u])); return d.storageUnits.map(u=>({...u,loaded:!!(pm[u.id]?.loaded)})); }); });
+    es.addEventListener('inventory_loaded',e=>{ const d=JSON.parse(e.data); setInventoryCount(d.itemCount||0); if(d.storageUnits?.length) setStorageUnits(prev=>{ const prevMap=Object.fromEntries(prev.map(u=>[u.id,u])); return d.storageUnits.map(u=>({...u,loaded:!!(prevMap[u.id]?.loaded)})); }); });
+    es.addEventListener('storage_loaded',e=>{ const d=JSON.parse(e.data); setStorageUnits(p=>p.map(u=>u.id===d.id?{...u,loaded:true,itemCount:d.itemCount}:u)); });
+    es.addEventListener('all_storage_loaded',()=>setLoadingStorage(false));
+    es.addEventListener('price_progress',e=>{ const d=JSON.parse(e.data); setProgress({done:d.done,total:d.total,mhn:d.mhn,fromCache:d.fromCache}); });
+    es.addEventListener('prices_complete',e=>{ const d=JSON.parse(e.data); setRows(d.rows); if(d.currency && d.symbol){ setCurrency(d.currency); setCurrencySymbol(d.symbol); } setFetching(false); setProgress(null); if(d.rateLimit){ setPriceRateLimit(true); setTimeout(()=>setPriceRateLimit(false),8000); } else { setMsg('Prices updated ✓'); } });
+    es.addEventListener('error',e=>{ try{ setError(JSON.parse(e.data).message); }catch(ex){} });
+    const poll=setInterval(()=>api('GET','/api/state').then(applyState),5000);
+    return()=>{ es.close(); clearInterval(poll); };
+  },[]);  // runs once on mount — no currency dep needed here
+
+  const loadAll=async()=>{ setLoadingStorage(true); setError(null); await api('POST','/api/load-all-storage'); };
+  const refresh=async()=>{ const r=await api('POST','/api/refresh-inventory'); if(r.error) setError(r.error); };
+  const fetchPrices=async(newOnly=false)=>{ setFetching(true); setError(null); if(!newOnly) setRows([]); const r=await api('POST',`/api/fetch-prices?currency=${currency}`,{newOnly,currency}); if(r.error){setError(r.error);setFetching(false);} };
+  const exportCSV=()=>{
+    const h='Source,Storage,Item,Wear,Qty,Lowest,Median,Volume,Total,CachedDaysAgo\n';
+    const b=sorted.map(r=>[`"${r.source}"`,`"${r.storageName||''}"`,`"${r.name}"`,`"${r.wear}"`,r.qty,r.lowest??'',r.median??'',r.volume??'',r.total??'',r.cacheAge??''].join(',')).join('\n');
+    const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([h+b],{type:'text/csv'})); a.download=`cs2-vault-${new Date().toISOString().slice(0,10)}.csv`; a.click();
+    setMsg('CSV downloaded!'); setTimeout(()=>setMsg(null),3000);
+  };
+
+  const handleSort=k=>{ if(sortKey===k) setSortDir(d=>d==='asc'?'desc':'asc'); else{ setSortKey(k); setSortDir('desc'); } };
+  const filtered=rows.filter(r=>{ const t=search.toLowerCase(); return(!t||r.name.toLowerCase().includes(t)||r.wear.toLowerCase().includes(t)||(r.storageName||'').toLowerCase().includes(t))&&(srcFilter==='All'||r.source===srcFilter); });
+  const sorted=[...filtered].sort((a,b)=>{ const av=sortKey==='name'?a.name:sortKey==='wear'?a.wear:sortKey==='qty'?a.qty:sortKey==='lowest'?(a.lowest??-1):(a.total??-1); const bv=sortKey==='name'?b.name:sortKey==='wear'?b.wear:sortKey==='qty'?b.qty:sortKey==='lowest'?(b.lowest??-1):(b.total??-1); return av<bv?(sortDir==='asc'?-1:1):av>bv?(sortDir==='asc'?1:-1):0; });
+
+  const grandTotal=filtered.reduce((s,r)=>s+(r.total??0),0);
+  const selectedCurrencySymbol = currencySymbols[currency] || currencySymbol || '$';
+  const fmt = v => v==null ? '—' : selectedCurrencySymbol + v.toFixed(2);
+  const fmtBigC = v => { if(v==null) return '—'; if(v>=1000) return selectedCurrencySymbol+(v/1000).toFixed(1)+'k'; return selectedCurrencySymbol+v.toFixed(2); };
+  const invTotal=filtered.filter(r=>r.source==='Inventory').reduce((s,r)=>s+(r.total??0),0);
+  const suTotal=filtered.filter(r=>r.source==='Storage Unit').reduce((s,r)=>s+(r.total??0),0);
+  const loadedUnits=storageUnits.filter(u=>u.loaded).length;
+  const unpricedCount=filtered.filter(r=>r.lowest==null&&!r.error).length;
+  const pricedCount=filtered.filter(r=>r.lowest!=null).length;
+  const Th=({k,children,right})=><th className={right?'r':''} onClick={()=>handleSort(k)}>{children} <span style={{opacity:.28}}>{sortKey===k?(sortDir==='asc'?'↑':'↓'):'↕'}</span></th>;
+
+  const navItems=[
+    {id:'overview',icon:'◈',label:'Overview'},
+    {id:'items',   icon:'▤',label:'Items',   badge:rows.length||null},
+    {id:'transfer',icon:'⇄',label:'Transfer',badge:storageUnits.filter(u=>u.loaded).length||null},
+    {id:'tradeup', icon:'⚗',label:'Trade Up'},
+  ];
+
+  return (
+    <div className="layout">
+      <aside className="sidebar">
+        <div className="sidebar-logo">
+          <div className="wordmark">CS2 Vault</div>
+          <div className="tagline">inventory · storage · value</div>
+        </div>
+        <div className="sidebar-user">
+          <div className="user-avatar">{(user?.displayName||'?')[0].toUpperCase()}</div>
+          <div className="user-name">{user?.displayName||'Steam User'}</div>
+          <StatusDot status={status}/>
+        </div>
+        <nav className="nav">
+          {navItems.map(item=>(
+            <button key={item.id} className={`nav-item${nav===item.id?' active':''}`} onClick={()=>setNav(item.id)}>
+              <span className="nav-icon">{item.icon}</span>
+              {item.label}
+              {item.badge?<span className="nav-badge">{item.badge>999?'999+':item.badge}</span>:null}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <button className="nav-item" style={{color:'var(--red)',width:'100%'}} onClick={onLogout}><span className="nav-icon">↩</span>Sign Out</button>
+        </div>
+      </aside>
+
+      {/* ── Price fetch progress popup ── */}
+      {fetching && progress && (
+        <div style={{
+          position:'fixed',bottom:20,right:20,zIndex:9999,
+          background:'var(--card)',border:'1px solid var(--border)',
+          borderRadius:12,padding:'14px 18px',minWidth:260,maxWidth:320,
+          boxShadow:'0 8px 32px rgba(0,0,0,.45)',
+          animation:'fadeInUp .25s ease'
+        }}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+            <div style={{width:28,height:28,borderRadius:8,background:'rgba(93,124,252,.15)',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>💰</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>
+                {progress.fromCache ? 'Loading cached prices…' : 'Fetching prices…'}
+              </div>
+              <div style={{fontSize:11,color:'var(--dim)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:180}}>
+                {progress.mhn || ''}
+              </div>
+            </div>
+            <div style={{fontFamily:'DM Mono,monospace',fontSize:13,fontWeight:700,color:'var(--accent)'}}>
+              {Math.round(progress.done/progress.total*100)}%
+            </div>
+          </div>
+          <div style={{height:4,background:'var(--lift)',borderRadius:2,overflow:'hidden'}}>
+            <div style={{height:'100%',borderRadius:2,
+              background:'linear-gradient(90deg,var(--green),var(--accent))',
+              width:`${Math.round(progress.done/progress.total*100)}%`,
+              transition:'width .4s ease'}}/>
+          </div>
+          <div style={{marginTop:6,fontSize:11,color:'var(--dim)',textAlign:'right',fontFamily:'DM Mono,monospace'}}>
+            {progress.done} / {progress.total}
+          </div>
+        </div>
+      )}
+      {priceRateLimit && (
+        <div style={{
+          position:'fixed',bottom:20,right:20,zIndex:9999,
+          background:'var(--card)',border:'1px solid rgba(240,80,110,.3)',
+          borderRadius:12,padding:'12px 18px',minWidth:240,
+          boxShadow:'0 8px 32px rgba(0,0,0,.45)',
+          animation:'fadeInUp .25s ease'
+        }}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:28,height:28,borderRadius:8,background:'rgba(240,80,110,.15)',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>⏱</div>
+            <div>
+              <div style={{fontSize:12,fontWeight:600,color:'var(--red)'}}>Rate limited (429)</div>
+              <div style={{fontSize:11,color:'var(--dim)'}}>Steam throttled us — try again later</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Global icon download popup ── */}
+      {iconProg && !iconProg.complete && iconProg.total > 0 && (
+        <div style={{
+          position:'fixed',bottom:20,right:20,zIndex:9999,
+          background:'var(--card)',border:'1px solid var(--border)',
+          borderRadius:12,padding:'14px 18px',minWidth:260,maxWidth:320,
+          boxShadow:'0 8px 32px rgba(0,0,0,.45)',
+          animation:'fadeInUp .25s ease'
+        }}>
+          <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:10}}>
+            <div style={{width:28,height:28,borderRadius:8,background:'rgba(93,124,252,.15)',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>🖼</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:600,color:'var(--text)'}}>Downloading images</div>
+              <div style={{fontSize:11,color:'var(--dim)'}}>{iconProg.done} / {iconProg.total} icons</div>
+            </div>
+            <div style={{fontFamily:'DM Mono,monospace',fontSize:13,fontWeight:700,color:'var(--accent)'}}>
+              {Math.round(iconProg.done/iconProg.total*100)}%
+            </div>
+          </div>
+          <div style={{height:4,background:'var(--lift)',borderRadius:2,overflow:'hidden'}}>
+            <div style={{height:'100%',borderRadius:2,
+              background:'linear-gradient(90deg,var(--accent),#7c6ff7)',
+              width:`${Math.round(iconProg.done/iconProg.total*100)}%`,
+              transition:'width .4s ease'}}/>
+          </div>
+        </div>
+      )}
+      {iconProg && iconProg.complete && iconProg.total > 0 && (
+        <div style={{
+          position:'fixed',bottom:20,right:20,zIndex:9999,
+          background:'var(--card)',border:'1px solid rgba(62,213,152,.3)',
+          borderRadius:12,padding:'12px 18px',minWidth:240,
+          boxShadow:'0 8px 32px rgba(0,0,0,.45)',
+          animation:'fadeInUp .25s ease'
+        }}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <div style={{width:28,height:28,borderRadius:8,background:'rgba(62,213,152,.15)',
+              display:'flex',alignItems:'center',justifyContent:'center',fontSize:14}}>✓</div>
+            <div style={{flex:1}}>
+              <div style={{fontSize:12,fontWeight:600,color:'var(--green)'}}>Images ready</div>
+              <div style={{fontSize:11,color:'var(--dim)'}}>{iconProg.total} icons cached</div>
+            </div>
+            <button onClick={fetchIcons}
+              title="Re-fetch any still-missing icons"
+              style={{background:'none',border:'1px solid var(--border)',borderRadius:6,
+                color:'var(--dim)',cursor:'pointer',fontSize:11,padding:'3px 8px',
+                transition:'all .15s'}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor='var(--border2)';e.currentTarget.style.color='var(--text)';}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--dim)';}}>
+              ⟳ Refresh
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="content">
+        <div className="topbar">
+          <span className="topbar-title">{navItems.find(n=>n.id===nav)?.label}</span>
+          <div style={{flex:1}}/>
+          {inventoryCount>0&&<div className="stat-pill"><span>Inv</span><span className="val">{inventoryCount}</span></div>}
+          {storageUnits.length>0&&<div className="stat-pill"><span>SU</span><span className="val">{loadedUnits}/{storageUnits.length}</span></div>}
+          {rows.length>0&&<div className="stat-pill"><span>Total</span><span className="val">{fmtBigC(grandTotal)}</span></div>}
+          {/* Currency selector */}
+          <div style={{display:'flex',gap:2,marginLeft:4}}>
+            {['USD','EUR','GBP'].map(c=>(
+              <button key={c} onClick={()=>setCurrencyPref(c)}
+                style={{padding:'3px 7px',borderRadius:5,border:'1px solid',fontSize:10,cursor:'pointer',fontFamily:'DM Mono,monospace',
+                  borderColor:currency===c?'var(--accent)':'var(--border)',
+                  background:currency===c?'rgba(93,124,252,.15)':'transparent',
+                  color:currency===c?'var(--accent)':'var(--dim)'}}>
+                {c}
+              </button>
+            ))}
+          </div>
+
+          <button
+            onClick={fetchIcons}
+            disabled={iconProg && !iconProg.complete}
+            title={iconProg && !iconProg.complete ? 'Downloading icons…' : 'Re-fetch missing icons'}
+            style={{marginLeft:4,padding:'3px 9px',borderRadius:6,border:'1px solid var(--border)',
+              background:'transparent',color:'var(--dim)',cursor:'pointer',fontSize:11,
+              display:'flex',alignItems:'center',gap:5,transition:'all .15s',
+              opacity: iconProg && !iconProg.complete ? .5 : 1}}
+            onMouseEnter={e=>{if(!(iconProg&&!iconProg.complete)){e.currentTarget.style.borderColor='var(--border2)';e.currentTarget.style.color='var(--text)';}}}
+            onMouseLeave={e=>{e.currentTarget.style.borderColor='var(--border)';e.currentTarget.style.color='var(--dim)';}}>
+            {iconProg && !iconProg.complete
+              ? <><span style={{fontSize:10}}>⟳</span> {Math.round((iconProg.done||0)/(iconProg.total||1)*100)}%</>
+              : <><span style={{fontSize:11}}>🖼</span> {iconCacheCount > 0 ? iconCacheCount : 'Icons'}</>
+            }
+          </button>
+        </div>
+
+        <div className="page">
+          {error&&<div className="alert alert-red">{error}<button className="alert-close" onClick={()=>setError(null)}>✕</button></div>}
+          {msg&&  <div className="alert alert-blue">{msg}<button className="alert-close" onClick={()=>setMsg(null)}>✕</button></div>}
+
+          {/* ── OVERVIEW ── */}
+          {nav==='overview'&&<div>
+            {rows.length>0&&<div className="summary-strip">
+              {[{cls:'sc-total',label:'Grand Total',value:grandTotal,sub:`${pricedCount}/${filtered.length} priced`},
+                {cls:'sc-inv', label:'Inventory',   value:invTotal, sub:`${filtered.filter(r=>r.source==='Inventory').length} items`},
+                {cls:'sc-su',  label:'Storage',     value:suTotal,  sub:`${filtered.filter(r=>r.source==='Storage Unit').length} items · ${loadedUnits} loaded`}]
+              .map(c=><div key={c.label} className={`summary-card ${c.cls}`}>
+                <div className="sc-label">{c.label}</div>
+                <div className="sc-value" style={{color:c.cls==='sc-total'?'var(--green)':'var(--text)'}}>{fmtBig(c.value, currency)}</div>
+                <div className="sc-sub">{c.sub}</div>
+              </div>)}
+            </div>}
+
+            <LogBox logs={logs} show={showLog} onToggle={()=>setShowLog(s=>!s)}/>
+
+            {/* Storage units */}
+            <div style={{marginBottom:12}}>
+              <div style={{fontSize:10,fontWeight:700,color:'var(--dim)',textTransform:'uppercase',letterSpacing:'.07em',marginBottom:8}}>Storage Units — {loadedUnits}/{storageUnits.length} loaded</div>
+              {storageUnits.length===0
+                ?<div style={{color:'var(--sub)',fontSize:13,marginBottom:10}}>No storage units detected. Refresh inventory if GC is connected.</div>
+                :<div className="units-row">{storageUnits.map(u=><div key={u.id} className={`unit-chip${u.loaded?' loaded':''}`}><div className="chip-dot"/><span style={{fontWeight:500}}>{u.name}</span><span className="chip-count">{u.itemCount.toLocaleString()}</span></div>)}</div>}
+            </div>
+
+            {/* Actions */}
+            <div style={{display:'flex',gap:7,flexWrap:'wrap',marginBottom:14}}>
+              <button className="btn btn-ghost" onClick={refresh} disabled={status!=='gc_ready'}>↺ Refresh</button>
+              <button className="btn btn-ghost" onClick={loadAll} disabled={loadingStorage||storageUnits.length===0}>{loadingStorage?<><span className="spinner"/> Loading…</>:'▦ Load Storage'}</button>
+              <button className="btn btn-primary" onClick={()=>fetchPrices(false)} disabled={fetching}>{fetching?<><span className="spinner"/> Fetching…</>:'$ Fetch All Prices'}</button>
+              {!fetching&&(unpricedCount>0||pricedCount>0)&&<button className="btn btn-ghost" onClick={()=>fetchPrices(true)} disabled={fetching}>⚡ Fetch New Only ({unpricedCount})</button>}
+              {rows.length>0&&<button className="btn btn-ghost" onClick={exportCSV}>↓ CSV</button>}
+            </div>
+
+            {/* Progress */}
+            {/* price progress moved to corner popup */}
+
+            {/* Valuation table */}
+            {rows.length > 0 && <>
+              <div className="toolbar" style={{marginTop:4}}>
+                <div className="search-wrap">
+                  <span className="search-ico">⌕</span>
+                  <input className="search-input" placeholder="Search items, wear, storage…" value={search} onChange={e=>setSearch(e.target.value)}/>
+                </div>
+                <div className="filter-grp">
+                  {['All','Inventory','Storage Unit'].map(f=><button key={f} className={`filter-btn${srcFilter===f?' active':''}`} onClick={()=>setSrcFilter(f)}>{f}</button>)}
+                </div>
+                <span className="count-lbl" style={{marginLeft:'auto'}}>{sorted.length} · {fmtBigC(grandTotal)}</span>
+              </div>
+              <div className="table-wrap">
+                <div className="table-scroll">
+                  <table>
+                    <thead><tr>
+                      <th>Source</th>
+                      <Th k="name">Item</Th>
+                      <Th k="wear">Wear</Th>
+                      <Th k="qty" right>Qty</Th>
+                      <Th k="lowest" right>Lowest</Th>
+                      <th className="r">Median</th>
+                      <th className="r">Vol</th>
+                      <Th k="total" right>Total</Th>
+                    </tr></thead>
+                    <tbody>{sorted.map((r,i)=><tr key={i}>
+                      <td><span className={`src-tag ${r.source==='Inventory'?'src-inv':'src-su'}`}>{r.storageName||r.source}</span></td>
+                      <td style={{maxWidth:240,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.name}{r.cached&&<span className={`cache-dot${r.cacheAge>3?' stale':''}`} title={r.cacheAge===0?'today':`${r.cacheAge}d ago`}/>}{r.error&&<div style={{fontSize:10,color:'var(--red)'}}>{r.error}</div>}</td>
+                      <td style={{fontSize:12,color:'var(--sub)'}}>{r.wear||'—'}</td>
+                      <td className="r">{r.qty>1?<span className="qty-badge">×{r.qty}</span>:r.qty}</td>
+                      <td className="r"><span className={`price-val ${r.lowest!=null?'pv-green':'pv-dim'}`}>{fmt(r.lowest)}</span></td>
+                      <td className="r"><span className="price-val pv-dim">{fmt(r.median)}</span></td>
+                      <td className="r"><span className="price-val pv-dim">{fmtNum(r.volume)}</span></td>
+                      <td className="r"><span className={`price-val ${r.total!=null&&r.total>=10?'pv-big':'pv-dim'}`}>{fmt(r.total)}</span></td>
+                    </tr>)}</tbody>
+                    <tfoot><tr>
+                      <td colSpan={7} className="r" style={{color:'var(--sub)'}}>Grand Total</td>
+                      <td className="r" style={{fontSize:15,color:'var(--green)',fontFamily:'DM Mono,monospace'}}>{fmtBigC(grandTotal)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+              </div>
+            </>}
+
+            {rows.length===0&&!fetching&&<div className="empty-state">
+              <h3>Ready</h3>
+              <p>Load storage units then hit <strong>Fetch All Prices</strong></p>
+              <p style={{fontSize:12,marginTop:5}}>Prices cached · session saved · ~1 req/sec</p>
+            </div>}
+          </div>}
+
+          {/* ── ITEMS ── */}
+          {nav==='items'&&<ItemsView rows={rows} currency={currency}/>}
+
+          {/* ── TRANSFER ── */}
+          {nav==='transfer'&&<TransferView storageUnits={storageUnits} rows={rows} currency={currency}/>}
+
+          {/* ── TRADEUP ── */}
+          {nav==='tradeup'&&<TradeUpView storageUnits={storageUnits} rows={rows} currency={currency}/>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(p){super(p);this.state={error:null};}
+  static getDerivedStateFromError(e){return{error:e};}
+  render(){
+    if(this.state.error) return(
+      <div style={{padding:40,maxWidth:600,margin:'40px auto',background:'var(--panel)',border:'1px solid var(--red)',borderRadius:12}}>
+        <h2 style={{color:'var(--red)',marginBottom:8,fontFamily:'Syne,sans-serif'}}>Crash</h2>
+        <pre style={{fontSize:12,color:'var(--sub)',whiteSpace:'pre-wrap',marginBottom:16}}>{this.state.error?.message}</pre>
+        <button className="btn btn-ghost" onClick={()=>this.setState({error:null})}>Reload</button>
+      </div>
+    );
+    return this.props.children;
+  }
+}
+
+/* ── TRADEUP VIEW ── */
+function TradeUpView({storageUnits, rows, currency}) {
+  const [activeUnit, setActiveUnit] = useState(null);
+  const [search, setSearch] = useState('');
+  const [unitItems, setUnitItems] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [outcomes, setOutcomes] = useState(null);
+  const [avgFloat, setAvgFloat] = useState(null);
+  const [fPrime, setFPrime] = useState(null);
+  const [computing, setComputing] = useState(false);
+  const [expandedGroup, setExpandedGroup] = useState({});
+  const [outcomeSort, setOutcomeSort] = useState('pct');
+  const [savedTradeups, setSavedTradeups] = useState([]);
+  const [saveState, setSaveState] = useState('idle'); // 'idle'|'saving'|'saved'|'error'
+  const [saveNameInput, setSaveNameInput] = useState('');
+  const [editingTradeupId, setEditingTradeupId] = useState(null); // id of loaded tradeup being edited
+
+  const TRADEUP_PALETTE = ['#f5c542','#f08050','#c47aff','#ff6b9d','#4dd9e0','#ff9f43','#a8e063','#fd79a8'];
+  const WEAR_COLOR = {'Factory New':'#3ed598','Minimal Wear':'#5d7cfc','Field-Tested':'#f5c542','Well-Worn':'#f08050','Battle-Scarred':'#f0506e'};
+
+  const loadedUnits = storageUnits.filter(u=>u.loaded);
+  useEffect(()=>{ if(!activeUnit && loadedUnits.length>0) setActiveUnit(loadedUnits[0].id); },[loadedUnits.length]);
+
+  useEffect(()=>{
+    if(!activeUnit) return;
+    setLoading(true);
+    api('GET',`/api/storage-items/${activeUnit}?currency=${currency}`).then(d=>setUnitItems(d.items||[])).finally(()=>setLoading(false));
+  },[activeUnit, currency]);
+
+  // Load saved tradeups on mount
+  useEffect(()=>{ api('GET','/api/tradeups').then(d=>{ if(d.tradeups) setSavedTradeups(d.tradeups); }); },[]);
+
+  // Only set a default name when the field is empty and selection goes from 0 → something
+  useEffect(()=>{
+    if(selected.length > 0 && saveNameInput === '') {
+      const count = savedTradeups.filter(t=>t.name.startsWith('Tradeup #')).length + 1;
+      setSaveNameInput(`Tradeup #${count}`);
+    }
+  },[selected.length === 0 ? 0 : 1]); // only reacts to empty→nonempty transition
+
+  const groups = useMemo(()=>{
+    const t = search.toLowerCase();
+    const filtered = unitItems.filter(r=>
+      r.float != null &&
+      (!t || r.name.toLowerCase().includes(t) || (r.wear||'').toLowerCase().includes(t))
+    );
+    const byMhn = {};
+    filtered.forEach(r=>{
+      if(!byMhn[r.mhn]) byMhn[r.mhn]={mhn:r.mhn,name:r.name,wear:r.wear,iconUrl:r.iconUrl,lowest:r.lowest,items:[]};
+      byMhn[r.mhn].items.push(r);
+    });
+    const arr = Object.values(byMhn);
+    arr.sort((a,b)=>a.name.localeCompare(b.name));
+    arr.forEach(g=>g.items.sort((a,b)=>(a.float??1)-(b.float??1)));
+    return arr;
+  },[unitItems,search]);
+
+  const toggleItem = (item) => {
+    setSelected(s=>{ const idx=s.findIndex(x=>x.id===item.id); if(idx>=0) return s.filter(x=>x.id!==item.id); if(s.length>=10) return s; return [...s,item]; });
+  };
+  const removeSelected = (id) => { setSelected(s=>s.filter(x=>x.id!==id)); };
+  const clearSelected = () => { setSelected([]); setOutcomes(null); setFPrime(null); setAvgFloat(null); setSaveNameInput(''); setEditingTradeupId(null); };
+
+  const selectedRarities = useMemo(()=>[...new Set(selected.map(x=>x.rarity).filter(Boolean))],[selected]);
+  const rarityMismatch = selectedRarities.length > 1;
+  const avgSelectedFloat = selected.length > 0 ? selected.reduce((s,x)=>s+(x.float||0),0)/selected.length : null;
+
+  const computeOutcomes = async () => {
+    if(selected.length < 1) return;
+    setComputing(true); setOutcomes(null);
+    try {
+      const items = selected.map(x=>({ item_name: x.name, item_paint_wear: x.float||0 }));
+      const d = await api('POST','/api/tradeup/outcomes',{items});
+      if(d.error==='ineligible'&&d.ineligible){ setOutcomes({ineligible:d.ineligible}); return; }
+      if(d.error){ setOutcomes({error:d.error}); return; }
+      setOutcomes(d.outcomes); setAvgFloat(d.averageFloat); setFPrime(d.fPrime??null);
+    } catch(e){ setOutcomes({error:e.message}); }
+    finally{ setComputing(false); }
+  };
+
+  // Auto-compute whenever selection hits exactly 10
+  useEffect(()=>{
+    if(selected.length === 10) computeOutcomes();
+  },[selected.length]);
+
+  const saveTradeup = async () => {
+    if(selected.length===0) return;
+    setSaveState('saving');
+    const unitName = storageUnits.find(u=>u.id===activeUnit)?.name || '';
+    const itemSnapshots = selected.map(x=>({ id:x.id, mhn:x.mhn, name:x.name, wear:x.wear, float:x.float }));
+    const body = {
+      name: saveNameInput || `Tradeup #${savedTradeups.length+1}`,
+      unitId: activeUnit, unitName,
+      itemIds: selected.map(x=>x.id),
+      itemSnapshots,
+      outcomes: Array.isArray(outcomes) ? outcomes : [],
+      averageFloat: avgFloat, fPrime,
+    };
+
+    if(editingTradeupId) {
+      // Update existing — DELETE old, POST new with same id preserved via PATCH
+      const r = await api('PATCH', `/api/tradeups/${editingTradeupId}`, {
+        name: body.name,
+        unitId: body.unitId, unitName: body.unitName,
+        itemIds: body.itemIds, itemSnapshots: body.itemSnapshots,
+        outcomes: body.outcomes, averageFloat: body.averageFloat, fPrime: body.fPrime,
+      });
+      if(r.ok){
+        setSavedTradeups(ts=>ts.map(t=>t.id===editingTradeupId ? r.tradeup : t));
+        setSaveState('saved');
+        setTimeout(()=>setSaveState('idle'), 2000);
+      } else {
+        setSaveState('error');
+        setTimeout(()=>setSaveState('idle'), 2500);
+      }
+    } else {
+      const palIdx = savedTradeups.length % TRADEUP_PALETTE.length;
+      const r = await api('POST','/api/tradeups',{ ...body, hex: TRADEUP_PALETTE[palIdx] });
+      if(r.ok){
+        setSavedTradeups(ts=>[...ts,r.tradeup]);
+        setEditingTradeupId(r.tradeup.id); // now editing this one
+        setSaveState('saved');
+        setTimeout(()=>setSaveState('idle'), 2000);
+      } else {
+        setSaveState('error');
+        setTimeout(()=>setSaveState('idle'), 2500);
+      }
+    }
+  };
+
+  // Load a saved tradeup's snapshots into the selected list for review/editing
+  const loadSavedTradeup = (t) => {
+    if(!t.itemSnapshots||t.itemSnapshots.length===0) return;
+    setSelected(t.itemSnapshots.map(s=>({ id:s.id, mhn:s.mhn, name:s.name, wear:s.wear, float:s.float, iconUrl:null, lowest:null, rarity:null })));
+    setOutcomes(Array.isArray(t.outcomes)&&t.outcomes.length>0 ? t.outcomes : null);
+    setAvgFloat(t.averageFloat??null);
+    setFPrime(t.fPrime??null);
+    setSaveNameInput(t.name);
+    setSaveState('idle');
+    setEditingTradeupId(t.id);
+    if(t.unitId && loadedUnits.find(u=>u.id===t.unitId)) setActiveUnit(t.unitId);
+  };
+
+  const deleteSavedTradeup = async (id) => {
+    await api('DELETE',`/api/tradeups/${id}`);
+    setSavedTradeups(ts=>ts.filter(t=>t.id!==id));
+    if(editingTradeupId===id) { setEditingTradeupId(null); setSaveNameInput(''); }
+  };
+
+  const sortedOutcomes = useMemo(()=>{
+    if(!outcomes||outcomes.error||outcomes.ineligible) return [];
+    const arr=[...outcomes];
+    if(outcomeSort==='float') arr.sort((a,b)=>a.float_chance-b.float_chance);
+    else arr.sort((a,b)=>b.percentage-a.percentage);
+    return arr;
+  },[outcomes,outcomeSort]);
+
+  if(!loadedUnits.length) return (
+    <div style={{padding:32,color:'var(--sub)',textAlign:'center'}}>
+      <div style={{fontSize:32,marginBottom:12}}>⚗</div>
+      <div>Load a storage unit in <strong>Overview</strong> first.</div>
+    </div>
+  );
+
+  return (
+    <div style={{display:'flex',gap:0,height:'100%',minHeight:0}}>
+
+      {/* ── Left: item picker ── */}
+      <div style={{width:360,flexShrink:0,borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+        {/* Unit selector */}
+        <div style={{padding:'12px 14px 10px',borderBottom:'1px solid var(--border)',display:'flex',gap:8,flexWrap:'wrap'}}>
+          {loadedUnits.map(u=>(
+            <button key={u.id} onClick={()=>setActiveUnit(u.id)}
+              style={{padding:'4px 10px',borderRadius:6,border:'1px solid',fontSize:12,cursor:'pointer',
+                borderColor:activeUnit===u.id?'var(--accent)':'var(--border)',
+                background:activeUnit===u.id?'rgba(93,124,252,.15)':'transparent',
+                color:activeUnit===u.id?'var(--accent)':'var(--sub)'}}>
+              {u.name||'Storage Unit'}
+            </button>
+          ))}
+        </div>
+        {/* Search */}
+        <div style={{padding:'8px 12px',borderBottom:'1px solid var(--border)'}}>
+          <input placeholder="Search items…" value={search} onChange={e=>setSearch(e.target.value)}
+            style={{width:'100%',background:'var(--lift)',border:'1px solid var(--border)',borderRadius:6,padding:'6px 10px',color:'var(--text)',fontSize:13}}/>
+        </div>
+        {/* Item list */}
+        <div style={{flex:1,overflowY:'auto',padding:'6px 0'}}>
+          {loading && <div style={{padding:20,color:'var(--dim)',textAlign:'center',fontSize:13}}>Loading…</div>}
+          {!loading && groups.length===0 && <div style={{padding:20,color:'var(--dim)',textAlign:'center',fontSize:13}}>No items with float data</div>}
+          {groups.map(g=>{
+            const isExp = expandedGroup[g.mhn];
+            const selCount = g.items.filter(i=>selected.find(x=>x.id===i.id)).length;
+            return (
+              <div key={g.mhn}>
+                <div onClick={()=>setExpandedGroup(e=>({...e,[g.mhn]:!e[g.mhn]}))}
+                  style={{display:'flex',alignItems:'center',gap:10,padding:'7px 14px',cursor:'pointer',
+                    background:selCount>0?'rgba(93,124,252,.07)':'transparent',
+                    borderLeft:selCount>0?'2px solid var(--accent)':'2px solid transparent'}}>
+                  {STEAM_IMG(g.iconUrl)
+                    ?<img src={STEAM_IMG(g.iconUrl)} style={{width:40,height:30,objectFit:'contain',flexShrink:0,borderRadius:3}} onError={e=>e.target.style.display='none'}/>
+                    :<div style={{width:40,height:30,flexShrink:0,borderRadius:4,background:'var(--lift)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:700,color:'var(--dim)'}}>{(g.name||'?')[0]}</div>
+                  }
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{g.name}</div>
+                    <div style={{fontSize:11,color:'var(--dim)'}}>{g.wear} · {g.items.length} item{g.items.length!==1?'s':''}</div>
+                  </div>
+                  {selCount>0 && <span style={{background:'var(--accent)',color:'#fff',borderRadius:10,fontSize:11,fontWeight:700,padding:'1px 7px'}}>{selCount}</span>}
+                  <span style={{color:'var(--dim)',fontSize:11}}>{isExp?'▾':'▸'}</span>
+                </div>
+                {isExp && g.items.map(item=>{
+                  const isSel=!!selected.find(x=>x.id===item.id);
+                  const isDisabled=!isSel&&selected.length>=10;
+                  return (
+                    <div key={item.id} onClick={()=>!isDisabled&&toggleItem(item)}
+                      style={{display:'flex',alignItems:'center',gap:10,padding:'5px 14px 5px 52px',
+                        cursor:isDisabled?'not-allowed':'pointer',opacity:isDisabled?.4:1,
+                        background:isSel?'rgba(93,124,252,.12)':'transparent'}}>
+                      <div style={{width:16,height:16,flexShrink:0,borderRadius:3,border:'1.5px solid',
+                        borderColor:isSel?'var(--accent)':'var(--border2)',
+                        background:isSel?'var(--accent)':'transparent',
+                        display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,color:'#fff'}}>
+                        {isSel?'✓':''}
+                      </div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <span style={{fontSize:12,color:'var(--sub)',fontFamily:'DM Mono,monospace'}}>{item.float!=null?item.float.toFixed(8):'—'}</span>
+                      </div>
+                      {item.lowest!=null&&<span style={{fontSize:11,color:'var(--green)',fontFamily:'DM Mono,monospace'}}>${item.lowest.toFixed(2)}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Saved tradeups mini-list at bottom of left panel ── */}
+        {savedTradeups.length > 0 && (
+          <div style={{borderTop:'1px solid var(--border)',background:'var(--card)'}}>
+            <div style={{padding:'7px 12px',fontSize:10,fontWeight:700,color:'var(--dim)',textTransform:'uppercase',letterSpacing:'.06em',display:'flex',alignItems:'center',gap:6}}>
+              <span>Saved Tradeups</span>
+              <span style={{background:'rgba(93,124,252,.15)',color:'var(--accent)',borderRadius:8,padding:'0 5px',fontFamily:'DM Mono,monospace'}}>{savedTradeups.length}</span>
+              <span style={{fontWeight:400,textTransform:'none',fontSize:9,color:'var(--dim)',marginLeft:2}}>click to load</span>
+            </div>
+            <div style={{maxHeight:180,overflowY:'auto'}}>
+              {savedTradeups.map(t=>{
+                const isLoaded = editingTradeupId === t.id;
+                return (
+                  <div key={t.id}
+                    onClick={()=>loadSavedTradeup(t)}
+                    style={{display:'flex',alignItems:'center',gap:8,padding:'6px 12px',borderTop:'1px solid var(--border)',
+                      cursor:'pointer',transition:'background .1s',
+                      background:isLoaded?'rgba(93,124,252,.1)':'transparent'}}
+                    onMouseEnter={e=>e.currentTarget.style.background=isLoaded?'rgba(93,124,252,.15)':'rgba(255,255,255,.04)'}
+                    onMouseLeave={e=>e.currentTarget.style.background=isLoaded?'rgba(93,124,252,.1)':'transparent'}>
+                    <span style={{width:8,height:8,borderRadius:'50%',background:t.hex,flexShrink:0,display:'inline-block'}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+                        color:isLoaded?'var(--accent)':'var(--text)'}}>{t.name}</div>
+                      <div style={{fontSize:10,color:'var(--dim)',fontFamily:'DM Mono,monospace'}}>{t.itemIds.length} items · {t.unitName||'unknown unit'}</div>
+                    </div>
+                    {isLoaded && <span style={{fontSize:9,color:'var(--accent)',fontWeight:700,flexShrink:0}}>LOADED</span>}
+                    <button onClick={e=>{e.stopPropagation();deleteSavedTradeup(t.id);}} title="Delete"
+                      style={{background:'none',border:'none',color:'var(--dim)',cursor:'pointer',fontSize:13,padding:'0 2px',flexShrink:0}}
+                      onMouseEnter={e=>e.currentTarget.style.color='var(--red)'}
+                      onMouseLeave={e=>e.currentTarget.style.color='var(--dim)'}>✕</button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Middle: selected + compute ── */}
+      <div style={{width:320,flexShrink:0,borderRight:'1px solid var(--border)',display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+        <div style={{padding:'10px 14px',borderBottom:'1px solid var(--border)',display:'flex',flexDirection:'column',gap:8}}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+            <span style={{fontWeight:600,fontSize:13}}>Selected <span style={{color:'var(--accent)',fontFamily:'DM Mono,monospace'}}>{selected.length}/10</span></span>
+            {selected.length>0&&<button onClick={clearSelected} style={{background:'none',border:'none',color:'var(--dim)',cursor:'pointer',fontSize:12}}>Clear</button>}
+          </div>
+          {selected.length>0&&(
+            <div style={{display:'flex',gap:6}}>
+              <input value={saveNameInput} onChange={e=>{ setSaveNameInput(e.target.value); if(saveState!=='idle') setSaveState('idle'); }}
+                style={{flex:1,background:'var(--lift)',border:'1px solid var(--border)',borderRadius:5,
+                  padding:'5px 9px',color:'var(--text)',fontSize:12,outline:'none'}}
+                onKeyDown={e=>e.key==='Enter'&&saveTradeup()}
+                placeholder="Name this tradeup…"/>
+              <button onClick={saveTradeup} disabled={saveState==='saving'}
+                style={{padding:'5px 12px',borderRadius:5,border:'none',fontSize:11,fontWeight:600,cursor:'pointer',
+                  background:saveState==='saved'?'var(--green)':saveState==='error'?'var(--red)':'var(--accent)',color:'#fff',whiteSpace:'nowrap'}}>
+                {saveState==='saving'?<span className="spinner"/>:saveState==='saved'?'✓ Saved':saveState==='error'?'Error':'Save'}
+              </button>
+            </div>
+          )}
+        </div>
+        <div style={{flex:1,overflowY:'auto',padding:'6px 0'}}>
+          {selected.length===0&&(
+            <div style={{padding:'24px 16px',color:'var(--dim)',fontSize:12,textAlign:'center',lineHeight:1.8}}>
+              Pick up to 10 items from the left.<br/>All must be the same rarity.
+            </div>
+          )}
+          {selected.map((item,idx)=>(
+            <div key={item.id} style={{display:'flex',alignItems:'center',gap:10,padding:'6px 14px',borderBottom:'1px solid var(--border)'}}>
+              <div style={{width:22,height:22,flexShrink:0,borderRadius:4,background:'var(--lift)',
+                display:'flex',alignItems:'center',justifyContent:'center',fontSize:11,color:'var(--dim)',fontFamily:'DM Mono,monospace'}}>
+                {idx+1}
+              </div>
+              {item.iconUrl&&<img src={item.iconUrl} style={{width:34,height:26,objectFit:'contain',flexShrink:0}} onError={e=>e.target.style.display='none'}/>}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{item.name}</div>
+                <div style={{fontSize:11,color:'var(--dim)',fontFamily:'DM Mono,monospace'}}>{item.float!=null?item.float.toFixed(7):''}</div>
+              </div>
+              <button onClick={()=>removeSelected(item.id)} style={{background:'none',border:'none',color:'var(--dim)',cursor:'pointer',fontSize:14,padding:'0 2px',lineHeight:1}}>✕</button>
+            </div>
+          ))}
+        </div>
+        {rarityMismatch&&(
+          <div style={{padding:'8px 14px',borderTop:'1px solid var(--border)'}}>
+            <div style={{background:'rgba(240,80,110,.12)',border:'1px solid rgba(240,80,110,.3)',borderRadius:6,padding:'6px 10px',fontSize:11,color:'var(--red)'}}>
+              ⚠ Mixed rarities — may fail
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Right: outcomes ── */}
+      <div style={{flex:1,display:'flex',flexDirection:'column',height:'100%',overflow:'hidden'}}>
+        <div style={{padding:'10px 14px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+          <span style={{fontWeight:600,fontSize:13,flex:1}}>Possible Outcomes</span>
+          {outcomes && !outcomes.error && !outcomes.ineligible && outcomes.length>0 && (
+            <div style={{display:'flex',gap:4}}>
+              {['pct','float'].map(s=>(
+                <button key={s} onClick={()=>setOutcomeSort(s)}
+                  style={{padding:'3px 9px',borderRadius:5,border:'1px solid',fontSize:11,cursor:'pointer',
+                    borderColor:outcomeSort===s?'var(--accent)':'var(--border)',
+                    background:outcomeSort===s?'rgba(93,124,252,.15)':'transparent',
+                    color:outcomeSort===s?'var(--accent)':'var(--dim)'}}>
+                  {s==='pct'?'% Chance':'Float'}
+                </button>
+              ))}
+            </div>
+          )}
+          {avgSelectedFloat != null && (
+            <span style={{fontSize:11,color:'var(--sub)',fontFamily:'DM Mono,monospace',whiteSpace:'nowrap',
+              background:'var(--lift)',padding:'3px 8px',borderRadius:5,border:'1px solid var(--border)'}}>
+              avg {avgSelectedFloat.toFixed(6)}
+            </span>
+          )}
+          <button onClick={computeOutcomes} disabled={computing||selected.length<1}
+            style={{padding:'5px 14px',borderRadius:7,border:'none',
+              cursor:selected.length<1?'not-allowed':'pointer',
+              background:selected.length<1?'var(--lift)':'var(--accent)',
+              color:selected.length<1?'var(--dim)':'#fff',
+              fontWeight:600,fontSize:12,flexShrink:0,whiteSpace:'nowrap'}}>
+            {computing?'…':`Compute${selected.length>0?' ('+selected.length+')':''}`}
+          </button>
+        </div>
+
+        <div style={{flex:1,overflowY:'auto',padding:'10px 14px'}}>
+          {!outcomes && !computing && (
+            <div style={{padding:'40px 0',color:'var(--dim)',textAlign:'center',fontSize:13,lineHeight:2}}>
+              Select items and press<br/><strong style={{color:'var(--sub)'}}>Compute Outcomes</strong>
+            </div>
+          )}
+          {computing && <div style={{padding:'40px 0',color:'var(--dim)',textAlign:'center',fontSize:13}}>Computing…</div>}
+          {outcomes && outcomes.ineligible && (
+            <div style={{padding:'16px',background:'rgba(240,80,110,.08)',border:'1px solid rgba(240,80,110,.25)',borderRadius:8,fontSize:13}}>
+              <div style={{fontWeight:600,color:'var(--red)',marginBottom:8}}>
+                ✕ {outcomes.ineligible.length} item{outcomes.ineligible.length!==1?'s':''} not in tradeup collections
+              </div>
+              <div style={{color:'var(--sub)',fontSize:12,lineHeight:1.7}}>
+                {outcomes.ineligible.map((name,i)=>(
+                  <div key={i} style={{display:'flex',alignItems:'center',gap:6}}>
+                    <span style={{color:'var(--red)',opacity:.6}}>—</span><span>{name}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{marginTop:10,padding:'8px 10px',background:'rgba(0,0,0,.2)',borderRadius:6,fontSize:11,color:'var(--dim)',lineHeight:1.6}}>
+                These skins aren't in any CS2 collection and can't be traded up.
+              </div>
+            </div>
+          )}
+          {outcomes && outcomes.error && (
+            <div style={{padding:'16px',background:'rgba(240,80,110,.1)',border:'1px solid rgba(240,80,110,.3)',borderRadius:8,color:'var(--red)',fontSize:13}}>
+              {outcomes.error}
+            </div>
+          )}
+          {avgFloat != null && outcomes && !outcomes.error && !outcomes.ineligible && (
+            <div style={{marginBottom:12,display:'flex',gap:16,fontSize:12,color:'var(--sub)',flexWrap:'wrap'}}>
+              <span>Avg float: <strong style={{color:'var(--text)',fontFamily:'DM Mono,monospace'}}>{avgFloat.toFixed(8)}</strong></span>
+              {fPrime != null && <span title="Normalized float used for outcome prediction">f′: <strong style={{color:'var(--accent)',fontFamily:'DM Mono,monospace'}}>{fPrime.toFixed(8)}</strong></span>}
+              <span>{sortedOutcomes.length} outcome{sortedOutcomes.length!==1?'s':''}</span>
+            </div>
+          )}
+          {sortedOutcomes.map((outcome,i)=>{
+            const wColor = WEAR_COLOR[outcome.item_wear_name] || 'var(--sub)';
+            return (
+              <div key={i} style={{display:'flex',alignItems:'center',gap:12,padding:'10px 12px',
+                borderRadius:8,border:'1px solid var(--border)',marginBottom:8,background:'var(--card)'}}>
+                {outcome.image
+                  ?<img src={outcome.image} style={{width:52,height:40,objectFit:'contain',flexShrink:0}} onError={e=>e.target.style.display='none'}/>
+                  :<div style={{width:52,height:40,flexShrink:0,background:'var(--lift)',borderRadius:6,display:'flex',alignItems:'center',justifyContent:'center',color:'var(--dim)',fontSize:11,fontWeight:700}}>{(outcome.item_name||'?')[0]}</div>
+                }
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{outcome.item_name}</div>
+                  <div style={{display:'flex',gap:10,marginTop:3,fontSize:11,flexWrap:'wrap'}}>
+                    <span style={{color:wColor,fontWeight:600}}>{outcome.item_wear_name}</span>
+                    <span style={{color:'var(--dim)',fontFamily:'DM Mono,monospace'}}>float {outcome.float_chance.toFixed(6)}</span>
+                    <span style={{color:'var(--sub)',fontFamily:'DM Mono,monospace',fontSize:10}}>{outcome.collection}</span>
+                  </div>
+                </div>
+                <div style={{width:90,flexShrink:0,textAlign:'right'}}>
+                  <div style={{fontFamily:'DM Mono,monospace',fontSize:14,fontWeight:700,color:'var(--text)'}}>{outcome.percentage}%</div>
+                  <div style={{height:4,background:'var(--lift)',borderRadius:2,marginTop:4,overflow:'hidden'}}>
+                    <div style={{height:'100%',width:`${Math.min(outcome.percentage,100)}%`,background:`linear-gradient(90deg,var(--accent),${wColor})`,borderRadius:2}}/>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [user,setUser]=useState(null);
+  useEffect(()=>{ fetch('/api/state').then(r=>r.json()).then(s=>{ if(s.status==='gc_ready') setUser(s); }); },[]);
+  const logout=async()=>{ await api('POST','/api/logout'); setUser(null); };
+  return user?<Dashboard user={user} onLogout={logout}/>:<LoginPage onLogin={setUser}/>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<ErrorBoundary><App/></ErrorBoundary>);
+</script>
+</body>
+</html>

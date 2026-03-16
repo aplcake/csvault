@@ -1,0 +1,1685 @@
+const express = require('express');
+const http = require('http');
+const path = require('path');
+const fs = require('fs');
+const axios = require('axios');
+const SteamUser = require('steam-user');
+const GlobalOffensive = require('globaloffensive');
+const SteamTotp = require('steam-totp');
+const { LoginSession, EAuthTokenPlatformType } = require('steam-session');
+const ByteBuffer = require('bytebuffer');
+const Language = require('globaloffensive/language.js');
+
+// ─── Tradeup data ─────────────────────────────────────────────────────────────
+const rawCollections = require('./collections.json');
+const collectionDirectory = {};
+for (const [colName, items] of Object.entries(rawCollections)) {
+  for (const itemName of Object.keys(items)) {
+    collectionDirectory[itemName] = colName;
+  }
+}
+
+const RARITY_LEVELS = {
+  'Factory New': 0.07,
+  'Minimal Wear': 0.15,
+  'Field-Tested': 0.38,
+  'Well-Worn': 0.45,
+  'Battle-Scarred': 1,
+};
+
+const RARITY_HEX = {
+  0: '00000A00', 1: '01000A00', 2: '02000A00', 3: '03000A00', 4: '04000A00',
+  10: '0a000a00', 11: '0b000a00', 12: '0c000a00', 13: '0d000a00', 14: '0e000a00',
+};
+
+// Given the output skin's float range and the normalized f' (0-1),
+// compute the actual output float and wear condition.
+// f' = (avgInputFloat - inputMin) / (inputMax - inputMin)  -- computed in computeTradeupOutcomes
+function getWearFromFPrime(outMin, outMax, fPrime) {
+  const outMinF = parseFloat(outMin), outMaxF = parseFloat(outMax);
+  const predictedFloat = outMinF + fPrime * (outMaxF - outMinF);
+  for (const [wear, threshold] of Object.entries(RARITY_LEVELS)) {
+    if (predictedFloat < threshold) return [wear, predictedFloat];
+  }
+  return ['Battle-Scarred', predictedFloat];
+}
+
+// Legacy alias kept for any callers — now correctly normalises avgFloat into fPrime
+function getWearFromFloat(minWear, maxWear, avgFloat) {
+  return getWearFromFPrime(minWear, maxWear, avgFloat);
+}
+
+function getPossibleOutcomeNames(colName, quality) {
+  let i = 1;
+  while (true) {
+    const possible = [];
+    for (const [name, data] of Object.entries(rawCollections[colName])) {
+      if (parseInt(data.best_quality) === quality + i) possible.push(name);
+    }
+    if (possible.length > 0 || quality + i > 15) return possible;
+    i++;
+  }
+}
+
+function computeTradeupOutcomes(items) {
+  let isStattrak = items[0].item_name.includes('StatTrak\u2122');
+  const cleanItems = items.map(it => ({
+    ...it,
+    item_name: it.item_name.replace('StatTrak\u2122 ', ''),
+  }));
+
+  let average = 0;
+  const seenSkins = [];
+  const allPossible = [];
+
+  // Pre-check: find any items not in collections data
+  const ineligible = [...new Set(cleanItems.map(it => it.item_name))]
+    .filter(name => !collectionDirectory[name]);
+  if (ineligible.length > 0) return { ineligible };
+
+  let inputMin = Infinity, inputMax = -Infinity;
+  for (const item of cleanItems) {
+    const col = collectionDirectory[item.item_name];
+    const quality = parseInt(rawCollections[col][item.item_name].best_quality);
+    const possible = getPossibleOutcomeNames(col, quality);
+    for (const p of possible) { if (!seenSkins.includes(p)) seenSkins.push(p); }
+    allPossible.push(...possible);
+    average += item.item_paint_wear;
+    // Track input skin float range for normalization
+    const iMin = parseFloat(rawCollections[col][item.item_name]['min-wear']);
+    const iMax = parseFloat(rawCollections[col][item.item_name]['max-wear']);
+    if (iMin < inputMin) inputMin = iMin;
+    if (iMax > inputMax) inputMax = iMax;
+  }
+  average = average / items.length;
+  // Normalize average actual float into f' (0-1) using the input skin's float range
+  const fPrime = inputMax > inputMin ? (average - inputMin) / (inputMax - inputMin) : average;
+
+  const results = [];
+  for (const skinName of seenSkins) {
+    const col = collectionDirectory[skinName];
+    const data = rawCollections[col][skinName];
+    const [wearName, predictedFloat] = getWearFromFPrime(data['min-wear'], data['max-wear'], fPrime);
+    const count = allPossible.filter(p => p === skinName).length;
+    const pct = (100 / (allPossible.length / count)).toFixed(2);
+    const displayName = isStattrak ? 'StatTrak\u2122 ' + skinName : skinName;
+    results.push({
+      item_name: displayName,
+      item_wear_name: wearName,
+      percentage: parseFloat(pct),
+      float_chance: predictedFloat,
+      image: data.imageURL || data.image || '',
+      collection: col,
+    });
+  }
+  results.sort((a, b) => b.percentage - a.percentage);
+  return { outcomes: results, averageFloat: average, fPrime };
+}
+
+const app = express();
+const server = http.createServer(app);
+
+// ─── SSE ─────────────────────────────────────────────────────────────────────
+
+const sseClients = new Set();
+function sseWrite(event, data) {
+  const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  sseClients.forEach(res => res.write(msg));
+}
+function log(msg) {
+  const ts = new Date().toTimeString().slice(0,8);
+  const line = `[${ts}] ${msg}`;
+  console.log(line);
+  sseWrite('log', { msg: line });
+}
+
+// ─── Persistent files ─────────────────────────────────────────────────────────
+
+const CACHE_FILE          = path.join(__dirname, 'prices_cache.json');
+const ICON_CACHE_FILE     = path.join(__dirname, 'icon_cache.json');
+const SESSION_FILE        = path.join(__dirname, 'session.json');
+const STORAGE_CACHE_FILE  = path.join(__dirname, 'storage_cache.json');
+// Note: add icon_cache.json to update.js FILES protected list when touching updater rules.
+
+let priceCache = {};
+try { priceCache = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8')); log(`Loaded ${Object.keys(priceCache).length} cached prices`); } catch(e) {}
+function saveCache() { fs.writeFileSync(CACHE_FILE, JSON.stringify(priceCache, null, 2)); }
+
+const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£' };
+const EXCHANGE_RATE_URL = 'https://api.exchangerate.host/latest?base=USD';
+let exchangeRates = { USD: 1, EUR: 0.92, GBP: 0.79 };
+
+function normalizePriceCache() {
+  let changed = false;
+  for (const [mhn, value] of Object.entries(priceCache)) {
+    if (typeof value === 'number') {
+      priceCache[mhn] = { usd: value, volume: null, ts: Date.now() };
+      changed = true;
+      continue;
+    }
+    if (!value || typeof value !== 'object') continue;
+    if (value.usd != null) continue;
+    if (value.lowest != null) {
+      const oldRate = (value.currency && exchangeRates[value.currency]) || 1;
+      priceCache[mhn] = {
+        usd: value.lowest / oldRate,
+        medianUsd: value.median != null ? value.median / oldRate : null,
+        volume: value.volume ?? null,
+        ts: value.ts || Date.now(),
+        error: value.error || null,
+      };
+      changed = true;
+    }
+  }
+  if (changed) saveCache();
+}
+
+function convertUsd(usd, currency) {
+  if (usd == null) return null;
+  return +(usd * (exchangeRates[currency] || 1)).toFixed(2);
+}
+
+function resolveCurrency(requested) {
+  return ['USD', 'EUR', 'GBP'].includes(requested) ? requested : activeCurrency;
+}
+
+function toDisplayPrice(price, currency) {
+  if (!price || typeof price !== 'object') {
+    return { lowest: null, median: null, volume: null, cached: false, cacheAge: null, error: null };
+  }
+  const lowestUsd = price.usd ?? null;
+  const medianUsd = price.medianUsd ?? lowestUsd;
+  return {
+    lowest: convertUsd(lowestUsd, currency),
+    median: convertUsd(medianUsd, currency),
+    volume: price.volume ?? null,
+    cached: !!price.ts,
+    cacheAge: price.ts ? Math.round((Date.now() - price.ts) / 86400000) : null,
+    error: price.error || null,
+  };
+}
+
+async function refreshExchangeRates() {
+  try {
+    const r = await axios.get(EXCHANGE_RATE_URL, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const rates = r.data?.rates || {};
+    if (rates.USD && rates.EUR && rates.GBP) {
+      exchangeRates = { USD: 1, EUR: rates.EUR, GBP: rates.GBP };
+      log(`Exchange rates updated: EUR=${exchangeRates.EUR.toFixed(4)} GBP=${exchangeRates.GBP.toFixed(4)}`);
+      return;
+    }
+    throw new Error('Missing expected rates in API response');
+  } catch (e) {
+    log('Exchange rate refresh failed: ' + e.message + ' (using last known rates)');
+  }
+}
+
+normalizePriceCache();
+refreshExchangeRates();
+setInterval(() => { refreshExchangeRates().catch(() => {}); }, 6 * 60 * 60 * 1000);
+
+let iconCache = {};
+try { iconCache = JSON.parse(fs.readFileSync(ICON_CACHE_FILE, 'utf8')); log(`Loaded ${Object.keys(iconCache).length} cached icons`); } catch(e) {}
+
+// Seed iconCache from collections.json imageURL — covers all collection skins
+// without needing any market scraping. Runs at startup, only fills gaps.
+try {
+  const cols = require('./collections.json');
+  let seeded = 0;
+  for (const items of Object.values(cols)) {
+    for (const [name, data] of Object.entries(items)) {
+      const url = data.imageURL || data.image || '';
+      if (url && url.startsWith('http') && !iconCache[name]) {
+        iconCache[name] = url;
+        seeded++;
+      }
+    }
+  }
+  if (seeded > 0) log(`Seeded ${seeded} icon URLs from collections.json`);
+} catch(e) { /* collections.json optional */ }
+function saveIconCache() { fs.writeFileSync(ICON_CACHE_FILE, JSON.stringify(iconCache, null, 2)); }
+function loadSession() { try { return JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8')); } catch(e) { return null; } }
+function saveSession(data) { fs.writeFileSync(SESSION_FILE, JSON.stringify(data, null, 2)); }
+function clearSession() { try { fs.unlinkSync(SESSION_FILE); } catch(e) {} }
+
+// ─── Storage cache ────────────────────────────────────────────────────────────
+function loadStorageCache() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(STORAGE_CACHE_FILE, 'utf8'));
+    // raw = { storageUnits: [...], storageContents: { id: [...] } }
+    if (raw.storageUnits) storageUnits = raw.storageUnits;
+    if (raw.storageContents) storageContents = raw.storageContents;
+    const total = Object.keys(storageContents).length;
+    const items = Object.values(storageContents).reduce((s, a) => s + a.length, 0);
+    log(`Storage cache loaded: ${total} units, ${items} items`);
+    return true;
+  } catch(e) { return false; }
+}
+function saveStorageCache() {
+  try {
+    fs.writeFileSync(STORAGE_CACHE_FILE, JSON.stringify({ storageUnits, storageContents }, null, 2));
+  } catch(e) { log('Storage cache save failed: ' + e.message); }
+}
+
+// ─── State ────────────────────────────────────────────────────────────────────
+
+let steamClient = null;
+let csgo = null;
+let steamState = { status: 'disconnected', displayName: null, avatarUrl: null, steamID: null };
+let inventory = [];
+let storageUnits = [];
+let storageContents = {};
+let steamInventoryMap = {}; // assetid → market_hash_name (from Steam web API)
+// iconCache is loaded from disk above (icon_cache.json) and persists across sessions.
+let iconProgress = { done: 0, total: 0, complete: true }; // progress for async icon fetches
+
+// Load storage cache immediately so UI has data before GC connects
+loadStorageCache();
+
+const ITEMS_GAME_SOURCES = [
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/game/csgo/pak01_dir/scripts/items/items_game.txt',
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/game/csgo/scripts/items/items_game.txt',
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/csgo/pak01_dir/scripts/items/items_game.txt',
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/csgo/scripts/items/items_game.txt',
+  'https://raw.githubusercontent.com/nicklvsa/csgo-items/main/items_game.txt',
+  'https://files.skinledger.com/counterstrike/items_game.txt',
+];
+
+const ENGLISH_SOURCES = [
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/game/csgo/pak01_dir/resource/csgo_english.txt',
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/game/csgo/resource/csgo_english.txt',
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/csgo/pak01_dir/resource/csgo_english.txt',
+  'https://raw.githubusercontent.com/SteamDatabase/GameTracking-CS2/master/csgo/resource/csgo_english.txt',
+  'https://files.skinledger.com/counterstrike/csgo_english.txt',
+];
+
+function resetSteam() {
+  if (steamClient) { try { steamClient.logOff(); } catch(e) {} }
+  steamClient = null; csgo = null;
+  inventory = [];
+  // Note: storage_cache.json on disk is intentionally kept across logouts
+  steamInventoryMap = {};
+  steamState = { status: 'disconnected', displayName: null, avatarUrl: null, steamID: null };
+}
+
+// ─── Item schema (fallback for storage unit items) ────────────────────────────
+// Hardcoded weapon def_index map — immune to schema parsing bugs.
+// Paint kit names still come from csgo_english.txt translations.
+
+const WEAPON_NAMES = {
+  1:'Desert Eagle',2:'Dual Berettas',3:'Five-SeveN',4:'Glock-18',
+  7:'AK-47',8:'AUG',9:'AWP',10:'FAMAS',11:'G3SG1',13:'Galil AR',
+  14:'M249',16:'M4A4',17:'MAC-10',19:'P90',23:'MP5-SD',24:'UMP-45',
+  25:'XM1014',26:'PP-Bizon',27:'MAG-7',28:'Negev',29:'Sawed-Off',
+  30:'Tec-9',31:'Zeus x27',32:'P2000',33:'MP7',34:'MP9',35:'Nova',
+  36:'P250',38:'SCAR-20',39:'SG 553',40:'SSG 08',41:'Knife',
+  60:'M4A1-S',61:'USP-S',63:'CZ75-Auto',64:'R8 Revolver',
+  500:'Bayonet',503:'Flip Knife',505:'Gut Knife',506:'Karambit',
+  507:'M9 Bayonet',508:'Huntsman Knife',509:'Falchion Knife',
+  512:'Bowie Knife',514:'Butterfly Knife',515:'Shadow Daggers',
+  516:'Paracord Knife',517:'Survival Knife',518:'Ursus Knife',
+  519:'Navaja Knife',520:'Nomad Knife',521:'Stiletto Knife',
+  522:'Talon Knife',523:'Classic Knife',526:'Skeleton Knife',
+  4725:'Sport Gloves',4726:'Driver Gloves',4727:'Hand Wraps',
+  4730:'Moto Gloves',4731:'Specialist Gloves',4732:'Hydra Gloves',
+  4733:'Broken Fang Gloves',5027:'Bloodhound Gloves',
+  4846:'Bloodhound Gloves',4848:'Bloodhound Gloves',
+  42:'Knife',43:'Flip Knife',44:'Gut Knife',45:'Karambit',46:'M9 Bayonet',
+  47:'Bayonet',48:'Huntsman Knife',49:'Falchion Knife',
+  59:'Bowie Knife',
+};
+
+let translations = {};
+let schemaPaints = {};
+let schemaStickers = {};
+let schemaItemNames = {}; // def_index → market_hash_name, loaded from items.json // sticker_id → translated name e.g. "Sticker | Fnatic | Cologne 2014"
+let keychainNames = {};
+try {
+  keychainNames = JSON.parse(fs.readFileSync(path.join(__dirname, 'keychains.json'), 'utf8'));
+  log('Keychain names loaded: ' + Object.keys(keychainNames).length + ' ✓');
+} catch (e) {
+  keychainNames = {};
+}
+
+// ─── Build items.json from skinledger (no Steam login needed) ────────────────
+async function buildItemsJson(outPath) {
+  const ITEMS_GAME_URLS = ITEMS_GAME_SOURCES;
+  const ENGLISH_URLS = ENGLISH_SOURCES;
+
+  function shouldSkipItem(name, def) {
+    if (def === 0) return true;
+    // Weapons and gloves handled by paint kit schema
+    if ((def >= 1 && def <= 64) || (def >= 500 && def <= 526)) return true;
+    const gloves = [4725,4726,4727,4728,4729,4730,4731,4732,4733,4846,4848,5027];
+    if (gloves.includes(def)) return true;
+    const lo = name.toLowerCase();
+    const skipContains = [
+      'operation coin','service medal','map coin','graffiti box','sealed graffiti',
+      'profile background','music kit box','gift package','tournament pass',
+      'esports key','case key','winter offensive package','phoenix package',
+      'the cache package','combo package',
+    ];
+    const skipExact = new Set(['sticker name','storage unit','capsule key']);
+    if (skipExact.has(lo.trim())) return true;
+    for (const s of skipContains) if (lo.includes(s)) return true;
+    return false;
+  }
+
+  function parseTranslationsLocal(text) {
+    const out = {};
+    for (const line of text.split('\n')) {
+      const m = line.match(/^\s+"([^"]+)"\s+"([^"]+)"/);
+      if (m) out[m[1].toLowerCase()] = m[2];
+    }
+    return out;
+  }
+
+  function parseItemsGameLocal(text, trans) {
+    const result = {};
+    const lines = text.split('\n');
+    function tr(tag) {
+      if (!tag) return '';
+      const key = (tag.startsWith('#') ? tag.slice(1) : tag).toLowerCase();
+      return trans[key] || (tag.startsWith('#') ? tag.slice(1) : tag);
+    }
+    let inItems = false, depth = 0, pendingDef = null, itemDef = null, itemTag = null, itemDepth = 0;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!inItems) { if (line === '"items"') { inItems = true; depth = 0; } continue; }
+      const opens  = (line.match(/\{/g) || []).length;
+      const closes = (line.match(/\}/g) || []).length;
+      if (opens > 0 && pendingDef !== null && itemDef === null) {
+        itemDef = pendingDef; pendingDef = null; itemTag = null;
+        itemDepth = depth + opens; depth += opens - closes; continue;
+      }
+      depth += opens - closes;
+      if (itemDef === null && pendingDef === null && depth === 1) {
+        const m = line.match(/^"(\d+)"$/);
+        if (m) { pendingDef = parseInt(m[1]); continue; }
+      }
+      if (itemDef !== null) {
+        const m = line.match(/^"item_name"\s+"([^"]+)"/);
+        if (m) itemTag = m[1];
+      }
+      if (itemDef !== null && depth < itemDepth) {
+        if (itemTag) {
+          const name = tr(itemTag);
+          if (name && !shouldSkipItem(name, itemDef)) result[String(itemDef)] = name;
+        }
+        itemDef = null; itemTag = null; itemDepth = 0;
+      }
+      if (depth < 0) break;
+    }
+    return result;
+  }
+
+  async function tryFetch(urls) {
+    for (const url of urls) {
+      try {
+        log('Trying ' + url.replace('https://raw.githubusercontent.com/', 'github: ').replace('https://files.skinledger.com/', 'skinledger: '));
+        return await axios.get(url, { timeout: 20000, responseType: 'text' }).then(r => r.data);
+      } catch(e) {
+        log('  failed: ' + e.message);
+      }
+    }
+    throw new Error('All sources failed');
+  }
+  const [igText, enText] = await Promise.all([
+    tryFetch(ITEMS_GAME_URLS),
+    tryFetch(ENGLISH_URLS),
+  ]);
+  const trans = parseTranslationsLocal(enText);
+  const items = parseItemsGameLocal(igText, trans);
+  const out = {
+    _note: 'Auto-generated. Re-run node fetch-items.js or restart the app to update.',
+    _updated: new Date().toISOString().slice(0, 10),
+    ...items,
+  };
+  fs.writeFileSync(outPath, JSON.stringify(out, null, 2));
+  log('items.json built: ' + Object.keys(items).length + ' items written ✓');
+}
+
+async function loadSchema() {
+  try {
+    log('Loading paint kit translations...');
+    async function fetchFirst(urls, label) {
+      let lastErr = null;
+      for (const url of urls) {
+        try {
+          const res = await axios.get(url, { timeout: 20000, responseType: 'text' });
+          return res.data;
+        } catch(e) {
+          lastErr = e;
+          log(`  schema source failed (${label}): ${e.message.slice(0,80)}`);
+        }
+      }
+      throw new Error(`All ${label} sources failed: ${lastErr?.message || 'unknown'}`);
+    }
+    const [itemsGameText, englishText] = await Promise.all([
+      fetchFirst(ITEMS_GAME_SOURCES, 'items_game.txt'),
+      fetchFirst(ENGLISH_SOURCES, 'csgo_english.txt'),
+    ]);
+    const sRes = { data: itemsGameText };
+    const tRes = { data: englishText };
+    tRes.data.split('\n').forEach(line => {
+      const m = line.match(/"(.*?)"/g);
+      if (m && m[1]) translations[m[0].replace(/"/g,'').toLowerCase()] = m[1].replace(/"/g,'');
+    });
+    // Parse paint kit descriptions from csgo_english.txt translations
+    // Strategy: find all PaintKit_* translation keys — these are the skin names
+    // Then match paint kit IDs from items_game.txt using description_tag
+    const data = sRes.data;
+    // Simple line-by-line scan: find entries with "description_tag" near a numeric key
+    // Use a two-pass approach: extract all { "N" ... "description_tag" "X" } blocks
+    // by scanning for numeric keys followed by description_tag within reasonable distance
+    const lines = data.split('\n');
+    let currentId = null;
+    for (const line of lines) {
+      const idMatch = line.match(/^\s*"(\d+)"\s*$/);
+      if (idMatch) { currentId = parseInt(idMatch[1]); continue; }
+      if (currentId !== null) {
+        const tagMatch = line.match(/"description_tag"\s*"([^"]+)"/);
+        if (tagMatch) {
+          schemaPaints[currentId] = tagMatch[1];
+          currentId = null;
+          continue;
+        }
+        // Reset if we hit a new block or closing brace without finding description_tag
+        if (line.match(/^\s*\{/) || line.match(/^\s*\}/)) {
+          if (line.match(/^\s*\}/)) currentId = null;
+        }
+      }
+    }
+    log('Schema loaded: ' + Object.keys(WEAPON_NAMES).length + ' weapons, ' + Object.keys(schemaPaints).length + ' paint kits ✓');
+
+    // Bug fix #4: capture ALL numeric-keyed kit blocks with translatable item_name tags.
+    // This catches newer kit naming patterns (charms/lenticular/etc.) not covered by prefix checks.
+    let stickerId = null;
+    let stickerTag = null;
+    let stickerDepth = 0;
+    let pendingStickerId = null;
+    let depth = 0;
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      const opens = (line.match(/\{/g) || []).length;
+      const closes = (line.match(/\}/g) || []).length;
+      const idMatch = line.match(/^"(\d+)"$/);
+      if (depth === 1 && stickerId === null && idMatch) pendingStickerId = parseInt(idMatch[1], 10);
+      if (stickerId === null && pendingStickerId !== null && opens > 0) {
+        stickerId = pendingStickerId;
+        pendingStickerId = null;
+        stickerTag = null;
+        stickerDepth = depth + opens;
+      }
+      if (stickerId !== null) {
+        const tagMatch = line.match(/"item_name"\s*"([^"]+)"/);
+        if (tagMatch && tagMatch[1].includes('#')) stickerTag = tagMatch[1];
+      }
+      depth += opens - closes;
+      if (stickerId !== null && depth < stickerDepth) {
+        if (stickerTag) {
+          const name = tr(stickerTag);
+          if (name) schemaStickers[stickerId] = name;
+        }
+        stickerId = null;
+        stickerTag = null;
+        stickerDepth = 0;
+      }
+      if (depth < 0) break;
+    }
+    log('Sticker kits loaded: ' + Object.keys(schemaStickers).length + ' ✓');
+
+    // Load item names from local items.json (cases, capsules, agents, stickers, etc.)
+    // If items.json is missing or has fewer than 1000 entries, fetch it automatically
+    const itemsJsonPath = path.join(__dirname, 'items.json');
+    let itemsData = {};
+    try {
+      itemsData = JSON.parse(fs.readFileSync(itemsJsonPath, 'utf8'));
+    } catch(e) { /* will fetch below */ }
+    const itemCount = Object.keys(itemsData).filter(k => !k.startsWith('_')).length;
+    if (itemCount < 1000) {
+      log('items.json missing or incomplete (' + itemCount + ' entries) — fetching from skinledger...');
+      try {
+        await buildItemsJson(itemsJsonPath);
+        itemsData = JSON.parse(fs.readFileSync(itemsJsonPath, 'utf8'));
+      } catch(e) {
+        log('Auto-fetch failed: ' + e.message + ' — run node fetch-items.js manually');
+      }
+    }
+    for (const [k, v] of Object.entries(itemsData)) {
+      if (k.startsWith('_')) continue;
+      schemaItemNames[parseInt(k)] = v;
+    }
+    log('Item names loaded: ' + Object.keys(schemaItemNames).length + ' ✓');
+  } catch(e) {
+    log('Schema load failed: ' + e.message);
+  }
+}
+
+function tr(tag) {
+  if (!tag) return '';
+  const key = tag.startsWith('#') ? tag.slice(1).toLowerCase() : tag.toLowerCase();
+  return translations[key] || (tag.startsWith('#') ? tag.slice(1) : tag);
+}
+
+function getMHNFromSchema(item) {
+  const isWeaponLike = !!WEAPON_NAMES[item.def_index];
+  // Keychain/Charm:
+  // def=4000 = standalone charm in active inventory (attr2120 = kit ID)
+  // def=1355 = keychain stored in casket (attr306 = kit ID)
+  if (item.def_index === 4000 || item.def_index === 1355) {
+    const keychainAttr = item.def_index === 1355
+      ? (item.attribute || []).find(a => a.def_index === 306)
+      : (item.attribute || []).find(a => a.def_index === 2120);
+    let kid = null;
+    if (keychainAttr?.value != null) {
+      kid = Math.round(keychainAttr.value);
+    } else if (keychainAttr?.value_bytes) {
+      try {
+        const b = keychainAttr.value_bytes;
+        const buf = Buffer.isBuffer(b) ? b : Buffer.from(b.data || b.buffer || b);
+        kid = buf.readUInt32LE(0);
+      } catch(e) {}
+    }
+    if (kid != null) {
+      const isArmoryCharm = kid >= 6000 && kid < 7000;
+      if (!isArmoryCharm) return null;
+      const name = isArmoryCharm ? (keychainNames[kid] || keychainNames[String(kid)]) : null;
+      if (name) return name.startsWith('Charm') ? name : `Charm | ${name}`;
+      log('CHARM unknown kit=' + kid + ' def=' + item.def_index);
+      return `Charm | Unknown Kit ${kid}`;
+    }
+    return null;
+  }
+
+  // Sticker — any item with attribute 113 (sticker kit ID) is a sticker
+  // The GC can send stickers under various def_indexes (1209, 1348, etc.) but NOT 1355 (keychain)
+  // so we detect by attribute presence rather than def_index alone
+  if (!isWeaponLike && item.def_index !== 1355 && (item.def_index === 1209 || (item.attribute || []).some(a => a.def_index === 113))) {
+    const stickerAttr = (item.attribute || []).find(a => a.def_index === 113);
+    let sid = null;
+    if (stickerAttr?.value != null) {
+      sid = Math.round(stickerAttr.value);
+    } else if (stickerAttr?.value_bytes) {
+      // In GC casket items, value is null and value_bytes is a 4-byte uint32 LE
+      try {
+        const b = stickerAttr.value_bytes;
+        const buf = Buffer.isBuffer(b) ? b : Buffer.from(b.data || b.buffer || b);
+        sid = buf.readUInt32LE(0);
+      } catch(e) {}
+    }
+    if (sid != null) {
+      const name = schemaStickers[sid];
+      if (name) return name;
+      // Also check schemaItemNames (stickers stored there too)
+      const nameFromItems = schemaItemNames[sid];
+      if (nameFromItems) {
+        return nameFromItems.startsWith('Sticker') ? nameFromItems : `Sticker | ${nameFromItems}`;
+      }
+      return `Sticker | Unknown Kit ${sid}`;
+    }
+    return 'Sticker';
+  }
+
+  const weapon = WEAPON_NAMES[item.def_index];
+  if (!weapon) {
+    // schemaItemNames keys 65–3999 are sticker KIT IDs, not def_indexes.
+    // Real standalone items (cases, capsules, charms, agents) use def_index >= 4000.
+    // So only look up def_indexes >= 4000 here to avoid kit-ID collisions.
+    const schemaName = item.def_index >= 4000 ? schemaItemNames[item.def_index] : null;
+    if (schemaName) {
+      if (false) {
+        // placeholder to keep else-if structure intact
+      } else if (schemaName) {
+      // Charms (def_index 4000-4999) need "Charm | " prefix
+      // But cases, capsules, packages, sticker collections etc. share this range — don't prefix those
+      if (item.def_index >= 4000 && item.def_index < 5000 && !schemaName.startsWith('Charm')) {
+        const noPrefix = ['case','capsule','package','collection','key','graffiti','pin','music kit','patch','sticker','agent','souvenir'];
+        const lower = schemaName.toLowerCase();
+        if (!noPrefix.some(s => lower.includes(s))) {
+          return `Charm | ${schemaName}`;
+        }
+      }
+      return schemaName;
+      } // end sticker-kit guard else-if
+    }
+    return null;
+  }
+  const paintIndex = item.paint_index != null ? Math.round(item.paint_index) : null;
+  const skin = paintIndex != null ? tr(schemaPaints[paintIndex] || '') : '';
+
+  const prefix = item.kill_eater_value != null ? 'StatTrak\u2122 ' : (item.attribute?.find(a => a.def_index === 267) ? 'Souvenir ' : '');
+  const wearName = getWearName(item.paint_wear);
+
+  if (skin) return wearName ? `${prefix}${weapon} | ${skin} (${wearName})` : `${prefix}${weapon} | ${skin}`;
+  // Vanilla knives (def 500-526) get ★ name; vanilla gloves (def 4725+) without paint = not tradeable → skip
+  const isGlove = item.def_index >= 4725 || item.def_index === 4846 || item.def_index === 4848;
+  if (!isGlove && item.def_index >= 500) return `★ ${prefix}${weapon}`;
+  return null;
+}
+
+// ─── Steam inventory API ──────────────────────────────────────────────────────
+
+async function fetchSteamInventory(steamID) {
+  try {
+    log(`Fetching Steam inventory for ${steamID}...`);
+    let start = null;
+    let totalMapped = 0;
+    let totalAssets = 0;
+    let hasMore = true;
+    let expectedTotal = null;
+    const seenAssets = new Set();
+    // classid_instanceid → mhn (for matching casket items by classid)
+    const classMHNMap = {};
+
+    while (hasMore) {
+      const params = { l: 'english', count: 75 };
+      if (start) params.start_assetid = start;
+      const res = await axios.get(
+        `https://steamcommunity.com/inventory/${steamID}/730/2`,
+        { timeout: 15000, headers: { 'User-Agent': 'Mozilla/5.0' }, params }
+      );
+      const data = res.data;
+      if (!data?.assets || !data?.descriptions) { log('Steam inventory: empty or private'); break; }
+      if (expectedTotal == null) expectedTotal = Number(data.total_inventory_count) || 0;
+
+      for (const desc of data.descriptions) {
+        const type = desc.type || '';
+        const isTradeable = ['Rifle','Pistol','SMG','Shotgun','Sniper','Machinegun','Knife','Gloves','Equipment',
+          'Sticker','Container','Key','Pass','Gift','Tag','Patch','Graffiti','Music Kit',
+          'Agent','Sealed Graffiti','Collectible','Charm']
+          .some(t => type.includes(t));
+        if (isTradeable && desc.market_hash_name) {
+          classMHNMap[desc.classid] = desc.market_hash_name;
+          classMHNMap[`${desc.classid}_${desc.instanceid}`] = desc.market_hash_name;
+          if (desc.icon_url && !iconCache[desc.market_hash_name]) {
+            iconCache[desc.market_hash_name] = desc.icon_url;
+          }
+        }
+      }
+      for (const asset of data.assets) {
+        const key = `${asset.classid}_${asset.instanceid}`;
+        const mhn = classMHNMap[key] || classMHNMap[asset.classid];
+        if (mhn) { steamInventoryMap[asset.assetid] = mhn; totalMapped++; }
+        totalAssets++;
+        seenAssets.add(asset.assetid);
+      }
+
+      if (data.more && data.last_assetid) {
+        start = data.last_assetid;
+        await sleep(1000);
+      } else {
+        hasMore = false;
+      }
+    }
+    // Store classid map for later use with casket items
+    app._classMHNMap = classMHNMap;
+    // Bug fix #1: explicit pagination sanity log.
+    log(`Steam API pagination: total_inventory_count=${expectedTotal ?? 0}, fetched_assets=${totalAssets}, unique_assetids=${seenAssets.size}`);
+    log(`Steam inventory: ${totalAssets} active items, ${totalMapped} items mapped ✓`);
+  } catch(e) {
+    const status = e.response?.status;
+    const detail = e.response?.data ? JSON.stringify(e.response.data).slice(0,150) : e.message;
+    log(`Steam inventory fetch failed (${status||'?'}): ${detail}`);
+  }
+}
+
+// ─── Item parsing ─────────────────────────────────────────────────────────────
+
+const WEAR_NAMES  = ['Factory New','Minimal Wear','Field-Tested','Well-Worn','Battle-Scarred'];
+const WEAR_THRESH = [0.07, 0.15, 0.38, 0.45, 1.0];
+const getWearName = v => { if (v == null) return null; for (let i = 0; i < WEAR_THRESH.length; i++) if (v <= WEAR_THRESH[i]) return WEAR_NAMES[i]; return null; };
+
+function parseInventory(rawItems, isCasket = false) {
+  const result = [];
+  if (!rawItems || !Array.isArray(rawItems)) { log('parseInventory: not an array'); return result; }
+
+  // Debug: dump first 5 items so we can see exact field names
+
+
+  let _dumped = false;
+  let _skipCount = 0, _noMhn = 0, _noDef = 0;
+  for (const item of rawItems) {
+    if (!item?.def_index) { _noDef++; continue; }
+    // One-time full dump for mystery def=1355 items
+    if (item.def_index === 1355 && isCasket) {
+      const {attribute, equipped_state, ...rest} = item;
+      log('DEF1355 FULL: ' + JSON.stringify({...rest, attrSummary:(attribute||[]).map(a=>({d:a.def_index,v:a.value,vb:a.value_bytes?Buffer.from(a.value_bytes.data||a.value_bytes).readUInt32LE(0):null}))}));
+    }
+    // Skip non-tradeable/internal items
+    if (item.def_index === 49) continue; // Hammer (dev/internal tool)
+    if (item.def_index === 4950) continue; // Applied sticker decoration, not standalone
+    if (isCasket && !_dumped) { _dumped = true; log('CASKET ITEM SAMPLE: ' + JSON.stringify(item).slice(0,400)); }
+
+    // Storage unit
+    if (!isCasket && item.def_index === 1201) {
+      const nameAttr = (item.attribute || []).find(a => a.def_index === 7751);
+      let name = 'Storage Unit';
+      if (nameAttr?.value_bytes) {
+        try {
+          const b = Buffer.isBuffer(nameAttr.value_bytes) ? nameAttr.value_bytes : Buffer.from(nameAttr.value_bytes.buffer || nameAttr.value_bytes);
+          name = b.toString('utf8').replace(/\0/g,'').trim() || 'Storage Unit';
+        } catch(e) {}
+      }
+      if (name === 'Storage Unit' && item.custom_name) name = item.custom_name.trim();
+      storageUnits.push({ id: item.id.toString(), name, itemCount: item.casket_contained_item_count || 0 });
+      continue;
+    }
+
+    if (!isCasket && item.casket_id != null) continue;
+
+    // For active inventory items: look up by asset ID
+    // For casket items: look up by classid from Steam's own descriptions
+    let mhn = steamInventoryMap[item.id?.toString()];
+    if (!mhn) {
+      // Bug fix #2: active inventory now uses the same fallback chain as casket items.
+      const cm = app._classMHNMap || {};
+      mhn = cm[`${item.classid}_${item.instanceid}`] || cm[item.classid] || getMHNFromSchema(item);
+    }
+    if (!mhn) {
+      _noMhn++;
+      const allAttrs = (item.attribute||[]).map(a=>'attr'+a.def_index+'='+a.value).join(',');
+      log('NO MHN: def=' + item.def_index + ' id=' + item.id + ' classid=' + item.classid + ' [' + allAttrs + ']');
+      continue;
+    }
+    // Debug: log items that have attr2120 (charm kit)
+    const debugCharm = (item.attribute||[]).find(a => a.def_index === 2120);
+    if (debugCharm) {
+      const allAttrs = (item.attribute||[]).map(a=>'attr'+a.def_index+'='+JSON.stringify(a.value)+'/'+(a.value_bytes?Buffer.from(a.value_bytes.data||a.value_bytes).readUInt32LE(0):'null')).join(', ');
+      log('ITEM WITH CHARM ATTR: def=' + item.def_index + ' id=' + item.id + ' mhn=' + mhn + ' [' + allAttrs + ']');
+    }
+
+    // Detect applied charm (keychain) on this weapon — attribute 2120
+    // Only keep Armory charms (6000-6999) that exist in our keychain map.
+    let appliedCharm = null;
+    let keychainId = null;
+    let itemType = null;
+    const charmAttr2120 = (item.attribute || []).find(a => a.def_index === 2120);
+    const charmAttr = charmAttr2120;
+    if (charmAttr) {
+      let kid = null;
+      if (charmAttr.value != null) { kid = Math.round(charmAttr.value); }
+      else if (charmAttr.value_bytes) {
+        try {
+          const b = charmAttr.value_bytes;
+          const buf = Buffer.isBuffer(b) ? b : Buffer.from(b.data || b.buffer || b);
+          kid = buf.readUInt32LE(0);
+        } catch(e) {}
+      }
+      if (kid != null) {
+        const isArmoryCharm = kid >= 6000 && kid < 7000;
+        const cname = isArmoryCharm ? (keychainNames[kid] || keychainNames[String(kid)]) : null;
+        keychainId = kid;
+        appliedCharm = cname ? (cname.startsWith('Charm') ? cname : `Charm | ${cname}`) : null;
+        log('CHARM found on weapon ' + mhn + ': kit=' + kid + ' -> ' + appliedCharm);
+      }
+    }
+
+    if (mhn.startsWith('Charm |')) itemType = 'charm';
+
+    result.push({
+      id: item.id.toString(),
+      mhn,
+      wear: getWearName(item.paint_wear),
+      float: item.paint_wear,
+      stattrak: item.kill_eater_value != null,
+      defIndex: item.def_index,
+      appliedCharm,
+      keychain_id: keychainId,
+      type: itemType,
+    });
+  }
+  log('parseInventory: ' + rawItems.length + ' raw → ' + result.length + ' items' + (isCasket ? ' (casket)' : ''));
+  return result;
+}
+
+// ─── Steam connection ─────────────────────────────────────────────────────────
+
+function setupSteamHandlers() {
+  steamClient = new SteamUser();
+  csgo = new GlobalOffensive(steamClient);
+
+  csgo.on('debug', msg => {
+    if (!msg.includes('Unhandled') && !msg.includes('unhandled')) log(`[GC] ${msg}`);
+  });
+
+  steamClient.on('loggedOn', () => {
+    log('Steam logged in ✓');
+    steamState.status = 'connected';
+    steamClient.setPersona(SteamUser.EPersonaState.Online);
+    steamClient.gamesPlayed([730]);
+    log('Launched CS2, waiting for GC...');
+  });
+
+  steamClient.on('refreshToken', token => {
+    log('Refresh token received — saving session');
+    const existing = loadSession() || {};
+    saveSession({ ...existing, refreshToken: token });
+  });
+
+  steamClient.on('accountInfo', name => {
+    steamState.displayName = name;
+    sseWrite('state', steamState);
+  });
+
+  steamClient.on('steamGuard', (domain, callback) => {
+    log(`Steam Guard required (${domain ? 'email: ' + domain : '2FA'})`);
+    steamState.needsAuthCode = domain ? 'email' : '2fa';
+    sseWrite('steamGuard', { domain });
+    sseWrite('state', steamState);
+    app._steamGuardCallback = callback;
+  });
+
+  steamClient.on('error', err => {
+    log('Steam error: ' + err.message);
+    if ([84, 65, 5].includes(err.eresult)) { log('Session invalid — clearing'); clearSession(); }
+    steamState.status = 'disconnected';
+    sseWrite('error', { message: err.message });
+    sseWrite('state', steamState);
+  });
+
+  csgo.on('connectedToGC', () => {
+    log('GC connected ✓');
+    steamState.status = 'gc_ready';
+    steamState.steamID = steamClient.steamID?.getSteamID64() || null;
+    sseWrite('state', steamState);
+
+    // If we have cached storage contents, broadcast them immediately so the UI
+    // doesn't show "not loaded" while waiting for GC refresh
+    if (Object.keys(storageContents).length > 0) {
+      for (const unit of storageUnits) {
+        if (storageContents[unit.id]) {
+          sseWrite('storage_loaded', { id: unit.id, name: unit.name, itemCount: storageContents[unit.id].length, fromCache: true });
+        }
+      }
+    }
+
+    const raw = csgo.inventory;
+    log('GC inventory: ' + (Array.isArray(raw) ? raw.length : typeof raw) + ' items');
+
+    const doParse = label => {
+      const r = csgo.inventory;
+      if (!Array.isArray(r) || r.length === 0) { log(label + ': GC inventory empty'); return false; }
+      storageUnits = [];
+      inventory = parseInventory(r);
+      log(label + ': ' + inventory.length + ' skins, ' + storageUnits.length + ' storage units ✓');
+      sseWrite('inventory_loaded', {
+        itemCount: inventory.length,
+        storageUnits: storageUnits.map(u => ({ id: u.id, name: u.name, itemCount: u.itemCount, loaded: !!storageContents[u.id] })),
+      });
+      return true;
+    };
+
+    // Fetch Steam inventory for correct names first, then parse
+    fetchSteamInventory(steamState.steamID)
+      .catch(() => {})
+      .then(() => {
+        if (!doParse('After Steam fetch')) {
+          setTimeout(() => { if (!doParse('3s retry')) setTimeout(() => { if (!doParse('10s retry')) setTimeout(() => doParse('20s retry'), 10000); }, 7000); }, 3000);
+        }
+      });
+  });
+
+  csgo.on('disconnectedFromGC', reason => {
+    log('GC disconnected: ' + reason);
+    steamState.status = 'connected';
+    sseWrite('state', steamState);
+  });
+
+  steamState.status = 'connecting';
+  sseWrite('state', steamState);
+}
+
+// ─── Pricing ──────────────────────────────────────────────────────────────────
+
+const PRICE_DELAY = 6000;  // 6s between requests (~10/min, well under Steam's ~20/min limit)
+const PRICE_JITTER = 1500; // random extra 0-1500ms to avoid patterns
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const sleepJitter = async () => sleep(PRICE_DELAY + Math.floor(Math.random() * PRICE_JITTER));
+
+// Currency config: 1=USD, 3=EUR, 2=GBP
+const CURRENCY_CODES = { USD: 1, EUR: 3, GBP: 2 };
+let activeCurrency = 'USD'; // default
+
+// Item names that are untradeable / have no market value — skip price fetching
+const UNTRADEABLE_PATTERNS = [
+  // Coins / medals / trophies / badges
+  ' coin', 'service medal', 'veteran coin', 'silver coin', 'gold coin',
+  'trophy', 'badge', 'loyalty badge', 'pin',
+  // Pick'em / tournament trophies
+  "pick'em", 'trophy',
+  // Operation passes/coins
+  'operation vanguard', 'operation wildfire', 'operation hydra',
+  'operation broken fang', 'operation riptide', 'operation ares',
+  'operation phoenix', 'operation bloodhound', 'operation payback',
+  // Misc untradeable
+  'premier season', 'global offensive badge',
+  'pickem', 'token', 'coupon_',
+  // Year veteran coins
+  '5 year veteran', '10 year veteran', '15 year veteran', '20 year veteran',
+];
+function isUntradeable(mhn) {
+  if (!mhn) return false;
+  const lower = mhn.toLowerCase();
+  return UNTRADEABLE_PATTERNS.some(p => lower.includes(p));
+}
+
+// Signal to abort price fetch loop on 429
+let priceFetch429 = false;
+
+async function fetchSteamPrice(mhn) {
+  if (priceCache[mhn] !== undefined && priceCache[mhn]?.usd != null) return priceCache[mhn];
+  const p = s => { if (!s) return null; const n = parseFloat(String(s).replace(/[^0-9.]/g,'')); return isNaN(n) ? null : n; };
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await axios.get('https://steamcommunity.com/market/priceoverview/', {
+        params: { appid: 730, currency: CURRENCY_CODES.USD, market_hash_name: mhn },
+        timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      });
+      const result = {
+        usd: p(res.data.lowest_price),
+        medianUsd: p(res.data.median_price),
+        volume: res.data.volume ? parseInt(String(res.data.volume).replace(/,/g,''), 10) : null,
+        ts: Date.now(),
+        error: null,
+      };
+      priceCache[mhn] = result;
+      saveCache();
+      return result;
+    } catch (e) {
+      lastError = e;
+      if (e.response?.status === 429) {
+        priceFetch429 = true;
+        break;
+      }
+      await sleep(350 * attempt);
+    }
+  }
+
+  const cached = priceCache[mhn];
+  if (cached?.usd != null) {
+    return { ...cached, error: lastError?.message || 'price fetch failed' };
+  }
+  return {
+    usd: null,
+    medianUsd: null,
+    volume: null,
+    error: lastError?.response?.status === 429 ? '429' : (lastError?.message || 'price fetch failed'),
+    ts: Date.now(),
+  };
+}
+
+
+// Look up icon URL for an MHN — tries exact match first, then strips wear suffix
+// (ByMykel stores icons under base name like "AK-47 | Redline", not "AK-47 | Redline (Field-Tested)")
+const WEAR_RX_ICON = / \((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)$/;
+function getIconUrl(mhn) {
+  if (!mhn) return null;
+  if (iconCache[mhn]) return iconCache[mhn];
+  const base = mhn.replace(WEAR_RX_ICON, '');
+  if (base !== mhn && iconCache[base]) return iconCache[base];
+  // Also try StatTrak stripped
+  const noST = base.replace('StatTrak\u2122 ', '');
+  if (noST !== base && iconCache[noST]) return iconCache[noST];
+  return null;
+}
+
+// Fetch icon URLs for items missing them via Steam market search (batched)
+async function fetchMissingIcons() {
+  const allMHNs = [
+    ...inventory.map(i => i.mhn),
+    ...Object.values(storageContents).flat().map(i => i.mhn),
+  ].filter((m, i, a) => m && !iconCache[m] && a.indexOf(m) === i);
+
+  if (!allMHNs.length) {
+    iconProgress = { done: 0, total: 0, complete: true };
+    return;
+  }
+  log(`Fetching icons for ${allMHNs.length} items...`);
+  iconProgress = { done: 0, total: allMHNs.length, complete: false };
+
+  // Pass 1: fast bulk market search to hydrate icon cache.
+  const unresolved = new Set(allMHNs);
+  for (let page = 0; page < 20; page++) {
+    const start = page * 100;
+    let foundThisPage = 0;
+    try {
+      const searchRes = await axios.get('https://steamcommunity.com/market/search/render/', {
+        params: { appid: 730, norender: 1, count: 100, start, query: '' },
+        timeout: 10000,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+      });
+
+      const results = searchRes.data?.results || [];
+      for (const result of results) {
+        const name = result?.name;
+        const iconUrl = result?.asset_description?.icon_url;
+        if (name && iconUrl && unresolved.has(name) && !iconCache[name]) {
+          iconCache[name] = iconUrl;
+          unresolved.delete(name);
+          iconProgress.done++;
+          foundThisPage++;
+        }
+      }
+
+      if (!foundThisPage) break;
+      await sleep(600);
+    } catch(e) {
+      log(`Icon bulk search failed on page ${page + 1}: ${e.message}`);
+      break;
+    }
+  }
+  saveIconCache();
+
+  // Pass 2: fallback per-item render lookup for anything still unresolved.
+  const remainingMHNs = allMHNs.filter(mhn => !iconCache[mhn]);
+  for (const [idx, mhn] of remainingMHNs.entries()) {
+    if (iconCache[mhn]) {
+      iconProgress.done++;
+      continue;
+    } else {
+      let retries = 0;
+      try {
+        while (retries < 2) {
+          const res = await axios.get('https://steamcommunity.com/market/listings/730/' + encodeURIComponent(mhn) + '/render', {
+            params: { count: 1, currency: 1, language: 'english', format: 'json' },
+            timeout: 8000,
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+          });
+          // Bug fix #3: do not hardcode instance id 2; scan all instance maps.
+          const instanceMap = res.data?.assets?.[730];
+          if (instanceMap) {
+            for (const inst of Object.values(instanceMap)) {
+              const first = Object.values(inst || {})[0];
+              if (first?.icon_url) { iconCache[mhn] = first.icon_url; break; }
+            }
+          }
+          break;
+        }
+      } catch(e) {
+        if (e.response?.status === 429 && retries < 1) {
+          retries++;
+          await sleep(800);
+          try {
+            const retryRes = await axios.get('https://steamcommunity.com/market/listings/730/' + encodeURIComponent(mhn) + '/render', {
+              params: { count: 1, currency: 1, language: 'english', format: 'json' },
+              timeout: 8000,
+              headers: { 'User-Agent': 'Mozilla/5.0' },
+            });
+            const instanceMap = retryRes.data?.assets?.[730];
+            if (instanceMap) {
+              for (const inst of Object.values(instanceMap)) {
+                const first = Object.values(inst || {})[0];
+                if (first?.icon_url) { iconCache[mhn] = first.icon_url; break; }
+              }
+            }
+          } catch(_e) { /* skip */ }
+        }
+      }
+      iconProgress.done++;
+      await sleep(800); // Bug fix #3: reduced delay with retry for 429.
+    }
+
+    // Persist every 20 processed items so restarts keep progress.
+    if ((idx + 1) % 20 === 0) saveIconCache();
+  }
+  iconProgress.complete = true;
+  saveIconCache();
+  log('Icon fetch complete ✓');
+}
+
+function buildRows(currency = activeCurrency) {
+  const allItems = [
+    ...inventory.map(i => ({ ...i, source: 'Inventory', storageName: null })),
+    ...Object.entries(storageContents).flatMap(([id, items]) => {
+      const unit = storageUnits.find(u => u.id === id);
+      return items.map(i => ({ ...i, source: 'Storage Unit', storageName: unit?.name || id }));
+    }),
+  ].filter(item => !item.mhn.startsWith('Charm |') || item.keychain_id != null || item.type === 'charm');
+  const agg = {};
+  allItems.forEach(item => {
+    const key = `${item.source}::${item.storageName||''}::${item.mhn}`;
+    if (!agg[key]) agg[key] = { mhn: item.mhn, source: item.source, storageName: item.storageName, qty: 0 };
+    agg[key].qty++;
+  });
+  const wearRx = / \((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)$/;
+  return Object.values(agg).map(({ mhn, source, storageName, qty }) => {
+    const p = toDisplayPrice(priceCache[mhn] || {}, currency);
+    return {
+      source, storageName, mhn, qty,
+      name: mhn.replace(wearRx, ''),
+      wear: mhn.match(wearRx)?.[1] || '',
+      lowest: p.lowest ?? null, median: p.median ?? null, volume: p.volume ?? null,
+      total: p.lowest != null ? +(p.lowest * qty).toFixed(2) : null,
+      cached: p.cached,
+      cacheAge: p.cacheAge,
+      error: p.error,
+      iconUrl: getIconUrl(mhn),
+    };
+  }).sort((a,b) => (b.total??-1) - (a.total??-1));
+}
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+
+app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  sseClients.add(res);
+  // Replay current state to new subscribers
+  res.write(`event: state\ndata: ${JSON.stringify(steamState)}\n\n`);
+  if (inventory.length > 0 || storageUnits.length > 0) {
+    res.write(`event: inventory_loaded\ndata: ${JSON.stringify({
+      itemCount: inventory.length,
+      storageUnits: storageUnits.map(u => ({ id: u.id, name: u.name, itemCount: u.itemCount, loaded: !!storageContents[u.id] })),
+    })}\n\n`);
+  }
+  for (const [id, items] of Object.entries(storageContents)) {
+    const unit = storageUnits.find(u => u.id === id);
+    if (unit) res.write(`event: storage_loaded\ndata: ${JSON.stringify({ id, name: unit.name, itemCount: items.length })}\n\n`);
+  }
+  req.on('close', () => sseClients.delete(res));
+});
+
+app.get('/api/state', (req, res) => {
+  res.json({
+    ...steamState,
+    inventoryCount: inventory.length,
+    storageUnits: storageUnits.map(u => ({ ...u, loaded: !!storageContents[u.id] })),
+    hasSavedSession: !!loadSession()?.refreshToken,
+  });
+});
+
+app.post('/api/login', (req, res) => {
+  const { username, password, sharedSecret } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+  resetSteam();
+  setupSteamHandlers();
+  const loginDetails = { accountName: username, password, rememberPassword: true };
+  if (sharedSecret) { loginDetails.twoFactorCode = SteamTotp.generateAuthCode(sharedSecret); log('Using shared secret for 2FA'); }
+  log(`Logging in as ${username}...`);
+  saveSession({ username, sharedSecret: sharedSecret || null, refreshToken: null });
+  steamClient.logOn(loginDetails);
+  res.json({ ok: true });
+});
+
+app.post('/api/resume-session', (req, res) => {
+  const session = loadSession();
+  if (!session?.refreshToken) return res.status(400).json({ error: 'No saved session' });
+  resetSteam();
+  setupSteamHandlers();
+  log(`Resuming session for ${session.username || 'unknown'}...`);
+  const loginDetails = { refreshToken: session.refreshToken };
+  if (session.sharedSecret) loginDetails.twoFactorCode = SteamTotp.generateAuthCode(session.sharedSecret);
+  steamClient.logOn(loginDetails);
+  res.json({ ok: true, username: session.username });
+});
+
+app.post('/api/qr-start', async (req, res) => {
+  resetSteam();
+  log('Starting QR login...');
+  const session = new LoginSession(EAuthTokenPlatformType.SteamClient);
+  app._qrSession = session;
+
+  session.on('authenticated', async () => {
+    log('QR authenticated ✓');
+    saveSession({ username: session.accountName, sharedSecret: null, refreshToken: session.refreshToken });
+    log(`Session saved for ${session.accountName}`);
+    setupSteamHandlers();
+    log(`Logging in as ${session.accountName}...`);
+    steamClient.logOn({ refreshToken: session.refreshToken });
+    sseWrite('qr_authed', { username: session.accountName });
+  });
+
+  session.once('timeout', () => { log('QR timed out'); sseWrite('qr_timeout', {}); app._qrSession = null; });
+  session.once('error', err => { log('QR error: ' + err.message); sseWrite('qr_error', { message: err.message }); app._qrSession = null; });
+  session.on('remoteInteraction', () => { log('QR scanned — confirm in Steam app...'); sseWrite('qr_scanned', {}); });
+
+  try {
+    const { qrChallengeUrl } = await session.startWithQR();
+    log('QR code ready');
+    sseWrite('qr_url', { url: qrChallengeUrl });
+    res.json({ ok: true });
+  } catch(e) {
+    log('QR start failed: ' + e.message);
+    app._qrSession = null;
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/qr-cancel', (req, res) => {
+  if (app._qrSession) { try { app._qrSession.cancelLoginAttempt(); } catch(e) {} app._qrSession = null; log('QR cancelled'); }
+  res.json({ ok: true });
+});
+
+app.post('/api/auth-code', (req, res) => {
+  const { code } = req.body;
+  if (!code || !app._steamGuardCallback) return res.status(400).json({ error: 'No pending auth' });
+  app._steamGuardCallback(code);
+  app._steamGuardCallback = null;
+  steamState.needsAuthCode = false;
+  res.json({ ok: true });
+});
+
+app.post('/api/refresh-inventory', async (req, res) => {
+  if (!csgo) return res.status(400).json({ error: 'Not connected' });
+  const raw = csgo.inventory;
+  if (!Array.isArray(raw) || raw.length === 0) return res.status(400).json({ error: 'GC inventory empty' });
+  if (Object.keys(steamInventoryMap).length === 0 && steamState.steamID) {
+    log('Fetching Steam inventory map first...');
+    await fetchSteamInventory(steamState.steamID).catch(() => {});
+  }
+  storageUnits = [];
+  inventory = parseInventory(raw);
+  log('Refreshed: ' + inventory.length + ' items, ' + storageUnits.length + ' storage units ✓');
+  sseWrite('inventory_loaded', {
+    itemCount: inventory.length,
+    storageUnits: storageUnits.map(u => ({ id: u.id, name: u.name, itemCount: u.itemCount, loaded: !!storageContents[u.id] })),
+  });
+  res.json({ ok: true, items: inventory.length, storageUnits: storageUnits.length });
+});
+
+app.post('/api/load-all-storage', async (req, res) => {
+  if (!csgo || steamState.status !== 'gc_ready') return res.status(400).json({ error: 'Not connected to GC' });
+  res.json({ ok: true, total: storageUnits.length });
+  for (const unit of storageUnits) {
+    if (storageContents[unit.id]) {
+      sseWrite('storage_loaded', { id: unit.id, name: unit.name, itemCount: storageContents[unit.id].length });
+      continue;
+    }
+    log(`Loading: ${unit.name}...`);
+    await new Promise(resolve => {
+      csgo.getCasketContents(unit.id, async (err, items) => {
+        if (err) { log(`Error: ${unit.name}: ${err.message}`); sseWrite('storage_error', { id: unit.id, name: unit.name, error: err.message }); }
+        else {
+          // Re-fetch Steam inventory so all casket asset IDs are mapped (duplicates share classid but have unique assetids)
+          if (steamState.steamID) await fetchSteamInventory(steamState.steamID).catch(() => {});
+          const expected = Number(unit.itemCount) || 0;
+          let parsed = parseInventory(items || [], true);
+
+          // GC sometimes returns partial casket contents on first call — retry if short
+          for (let attempt = 1; attempt <= 3 && expected > 0 && parsed.length < expected; attempt++) {
+            log(`${unit.name}: got ${parsed.length}/${expected}, retry ${attempt}/3...`);
+            await sleep(500);
+            const retryItems = await new Promise(resolveRetry => {
+              csgo.getCasketContents(unit.id, (retryErr, retryRaw) => {
+                if (retryErr) { log(`${unit.name}: retry ${attempt} failed: ${retryErr.message}`); return resolveRetry([]); }
+                resolveRetry(retryRaw || []);
+              });
+            });
+            const merged = new Map(parsed.map(i => [i.id, i]));
+            for (const parsedItem of parseInventory(retryItems, true)) merged.set(parsedItem.id, parsedItem);
+            parsed = Array.from(merged.values());
+          }
+
+          storageContents[unit.id] = parsed;
+          const suffix = expected > 0 ? ` (${parsed.length}/${expected})` : '';
+          log(`${unit.name}: ${parsed.length} items${suffix} ✓`);
+          sseWrite('storage_loaded', { id: unit.id, name: unit.name, itemCount: storageContents[unit.id].length, expected });
+          saveStorageCache();
+        }
+        resolve();
+      });
+    });
+    await sleep(500);
+  }
+  log('All storage units loaded ✓');
+  saveStorageCache();
+  sseWrite('all_storage_loaded', {});
+  // Fetch icons for storage items in background (non-blocking)
+  fetchMissingIcons().catch(e => log('Icon fetch error: ' + e.message));
+});
+
+app.post('/api/fetch-prices', async (req, res) => {
+  const currency = resolveCurrency(req.query.currency || req.body?.currency);
+  const { newOnly = false } = req.body || {};
+  const allItems = [
+    ...inventory.map(i => ({ ...i, source: 'Inventory', storageName: null })),
+    ...Object.entries(storageContents).flatMap(([id, items]) => {
+      const unit = storageUnits.find(u => u.id === id);
+      return items.map(i => ({ ...i, source: 'Storage Unit', storageName: unit?.name || id }));
+    }),
+  ];
+  if (allItems.length === 0) return res.status(400).json({ error: 'No items loaded' });
+  const uniqueMHNs = [...new Set(allItems.map(i => i.mhn))];
+  // newOnly: skip items that already have a valid price (not 429-flagged, not missing)
+  const needs429Retry = m => priceCache[m]?.error === '429';
+  const toFetch = newOnly
+    ? uniqueMHNs.filter(m => !priceCache[m]?.usd || needs429Retry(m))
+    : uniqueMHNs;
+  const cached = uniqueMHNs.length - toFetch.length;
+  log(`Prices: ${toFetch.length} to fetch + ${cached} cached (newOnly=${newOnly})`);
+  res.json({ ok: true, total: toFetch.length + cached, toFetch: toFetch.length, cached });
+
+  priceFetch429 = false;
+  let done = 0;
+  // Serial requests (BATCH_SIZE=1) with jitter to avoid Steam 429
+  for (let idx = 0; idx < toFetch.length; idx++) {
+    const mhn = toFetch[idx];
+    if (priceFetch429) {
+      log('Price fetch stopped: 429 rate limit hit');
+      sseWrite('prices_complete', { rows: buildRows(currency), rateLimit: true, currency, symbol: CURRENCY_SYMBOLS[currency] });
+      return;
+    }
+    let result;
+    if (isUntradeable(mhn)) {
+      result = { mhn, skipped: true, fromCache: true, price: null };
+    } else {
+      const price = await fetchSteamPrice(mhn);
+      result = { mhn, fromCache: false, price };
+    }
+    done++;
+    const display = toDisplayPrice(result.price || {}, currency);
+    sseWrite('price_progress', {
+      done,
+      total: toFetch.length,
+      mhn: result.mhn,
+      skipped: !!result.skipped,
+      fromCache: !!result.fromCache,
+      ...display,
+    });
+    if (priceFetch429) {
+      log('Price fetch stopped: 429 rate limit hit after ' + done + ' requests');
+      sseWrite('prices_complete', { rows: buildRows(currency), rateLimit: true, currency, symbol: CURRENCY_SYMBOLS[currency] });
+      return;
+    }
+    if (idx + 1 < toFetch.length) await sleepJitter();
+  }
+  log('Prices complete ✓ (' + Object.keys(priceCache).length + ' cached)');
+  sseWrite('prices_complete', { rows: buildRows(currency), currency, symbol: CURRENCY_SYMBOLS[currency] });
+});
+
+app.get('/api/valuation', (req, res) => {
+  const currency = resolveCurrency(req.query.currency);
+  res.json({ rows: buildRows(currency), cachedPrices: Object.keys(priceCache).length, currency, symbol: CURRENCY_SYMBOLS[currency] });
+});
+
+app.get('/api/prices', (req, res) => {
+  const currency = resolveCurrency(req.query.currency);
+  const prices = {};
+  for (const [mhn, price] of Object.entries(priceCache)) {
+    prices[mhn] = toDisplayPrice(price, currency);
+  }
+  res.json({ currency, symbol: CURRENCY_SYMBOLS[currency], rates: exchangeRates, prices });
+});
+
+
+// Active inventory items (for Transfer-in from inventory to storage unit)
+app.get('/api/inventory-items', (req, res) => {
+  const currency = resolveCurrency(req.query.currency);
+  const wearRx = / \((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)$/;
+  const result = inventory
+  .filter(item => !item.mhn.startsWith('Charm |') || item.keychain_id != null || item.type === 'charm')
+  .map(item => {
+    const p = toDisplayPrice(priceCache[item.mhn] || {}, currency);
+    return {
+      id: item.id,
+      mhn: item.mhn,
+      name: item.mhn.replace(wearRx, ''),
+      wear: item.mhn.match(wearRx)?.[1] || '',
+      float: item.float,
+      stattrak: item.stattrak,
+      lowest: p.lowest ?? null,
+      iconUrl: getIconUrl(item.mhn),
+      appliedCharm: item.appliedCharm || null,
+      keychain_id: item.keychain_id ?? null,
+      type: item.type || null,
+      rarity: (() => {
+        const baseName = item.mhn.replace(/ \((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)$/, '').replace('StatTrak\u2122 ', '');
+        const col = collectionDirectory[baseName];
+        if (!col) return null;
+        return parseInt(rawCollections[col]?.[baseName]?.best_quality) || null;
+      })(),
+    };
+  });
+  res.json({ items: result });
+});
+
+app.get('/api/storage-items/:unitId', (req, res) => {
+  const currency = resolveCurrency(req.query.currency);
+  const { unitId } = req.params;
+  const items = storageContents[unitId];
+  if (!items) return res.json({ items: [], loaded: false });
+  // Return individual items with price data attached
+  const wearRx = / \((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)$/;
+  const result = items
+  .filter(item => !item.mhn.startsWith('Charm |') || item.keychain_id != null || item.type === 'charm')
+  .map(item => {
+    const p = toDisplayPrice(priceCache[item.mhn] || {}, currency);
+    return {
+      id: item.id,
+      mhn: item.mhn,
+      name: item.mhn.replace(wearRx, ''),
+      wear: item.mhn.match(wearRx)?.[1] || '',
+      float: item.float,
+      stattrak: item.stattrak,
+      lowest: p.lowest ?? null,
+      total: p.lowest ?? null,
+      cached: p.cached,
+      cacheAge: p.cacheAge,
+      error: p.error || null,
+      iconUrl: getIconUrl(item.mhn),
+      appliedCharm: item.appliedCharm || null,
+      keychain_id: item.keychain_id ?? null,
+      type: item.type || null,
+      rarity: (() => {
+        const baseName = item.mhn.replace(/ \((Factory New|Minimal Wear|Field-Tested|Well-Worn|Battle-Scarred)\)$/, '').replace('StatTrak\u2122 ', '');
+        const col = collectionDirectory[baseName];
+        if (!col) return null;
+        return parseInt(rawCollections[col]?.[baseName]?.best_quality) || null;
+      })(),
+    };
+  });
+  res.json({ items: result, loaded: true, currency, symbol: CURRENCY_SYMBOLS[currency] });
+});
+
+// Bug fix #3: expose async icon-fetch progress so UI can re-pull items when complete.
+app.get('/api/icon-progress', (req, res) => {
+  res.json({ ...iconProgress, complete: !!iconProgress.complete });
+});
+
+// Resolve unknown sticker kit IDs by searching Steam market
+app.get('/api/resolve-sticker/:kitId', async (req, res) => {
+  const kitId = parseInt(req.params.kitId);
+  if (!kitId) return res.status(400).json({ error: 'invalid kit id' });
+
+  // Bug fix #5: prefer schema names first.
+  const schemaName = schemaItemNames[kitId] || schemaStickers[kitId];
+  if (schemaName) {
+    const name = schemaName.startsWith('Sticker | ') ? schemaName : `Sticker | ${schemaName}`;
+    schemaStickers[kitId] = name;
+    return res.json({ name, iconUrl: iconCache[name] || null });
+  }
+
+  try {
+    // Bug fix #5: fallback market query by text search.
+    const searchRes = await axios.get('https://steamcommunity.com/market/search/render/', {
+      params: {
+        appid: 730,
+        norender: 1,
+        count: 1,
+        query: `Sticker ${kitId}`,
+      },
+      timeout: 8000,
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+
+    if (searchRes.data?.results?.length) {
+      const name = searchRes.data.results[0].name;
+      schemaStickers[kitId] = name;
+      if (searchRes.data.results[0].asset_description?.icon_url) {
+        iconCache[name] = searchRes.data.results[0].asset_description.icon_url;
+      }
+      return res.json({ name, iconUrl: iconCache[name] || null });
+    }
+    res.json({ name: null });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/logout', (req, res) => {
+  resetSteam();
+  clearSession();
+  sseWrite('state', steamState);
+  res.json({ ok: true });
+});
+
+app.post('/api/clear-cache', (req, res) => {
+  priceCache = {};
+  saveCache();
+  log('Price cache cleared');
+  res.json({ ok: true });
+});
+
+// ─── Transfer (move items in/out of storage via GC) ───────────────────────────
+
+// Remove item from storage unit (casket) → active inventory
+app.post('/api/transfer/remove', async (req, res) => {
+  const { casketId, itemId } = req.body;
+  if (!casketId || !itemId) return res.status(400).json({ error: 'casketId and itemId required' });
+  if (!csgo) return res.status(503).json({ error: 'GC not connected' });
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('GC timeout')), 10000);
+      csgo.once('itemCustomizationNotification', (itemIds, notificationType) => {
+        if (notificationType === 1014) { // CasketRemoved
+          clearTimeout(timeout);
+          resolve(itemIds);
+        }
+      });
+      csgo.removeFromCasket(casketId, itemId);
+    });
+    log(`Transferred out: item ${itemId} from casket ${casketId}`);
+    res.json({ ok: true });
+  } catch(e) {
+    log(`Transfer remove failed: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Add item to storage unit (casket) from active inventory
+app.post('/api/transfer/add', async (req, res) => {
+  const { casketId, itemId } = req.body;
+  if (!casketId || !itemId) return res.status(400).json({ error: 'casketId and itemId required' });
+  if (!csgo) return res.status(503).json({ error: 'GC not connected' });
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('GC timeout')), 10000);
+      csgo.once('itemCustomizationNotification', (itemIds, notificationType) => {
+        if (notificationType === 1013) { // CasketAdded
+          clearTimeout(timeout);
+          resolve(itemIds);
+        }
+      });
+      csgo.addToCasket(casketId, itemId);
+    });
+    log(`Transferred in: item ${itemId} to casket ${casketId}`);
+    res.json({ ok: true });
+  } catch(e) {
+    log(`Transfer add failed: ${e.message}`);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Tradeup endpoints ───────────────────────────────────────────────────────
+
+// Compute outcomes (pure math, no GC)
+app.post('/api/tradeup/outcomes', (req, res) => {
+  const { items } = req.body; // [{item_name, item_paint_wear}]
+  if (!items || !Array.isArray(items) || items.length < 1)
+    return res.status(400).json({ error: 'items array required' });
+  try {
+    const result = computeTradeupOutcomes(items);
+    if (result.ineligible) {
+      return res.status(400).json({ error: 'ineligible', ineligible: result.ineligible });
+    }
+    res.json({ outcomes: result.outcomes, averageFloat: result.averageFloat, fPrime: result.fPrime });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Note: /api/tradeup/execute was intentionally removed — tradeup execution is not supported.
+
+
+// Manually trigger icon fetch for any items still missing icons
+app.post('/api/fetch-icons', (req, res) => {
+  if (!iconProgress.complete) {
+    return res.json({ ok: false, message: 'Already running' });
+  }
+  res.json({ ok: true, message: 'Icon fetch started' });
+  fetchMissingIcons().catch(e => log('Icon fetch error: ' + e.message));
+});
+
+
+// On-demand icon fetch for a single MHN — called by frontend when image is missing
+// Rate-limited to 1 concurrent request to avoid hammering Steam
+let iconFetchInFlight = false;
+app.get('/api/icon/:mhn', async (req, res) => {
+  const mhn = decodeURIComponent(req.params.mhn);
+  if (!mhn) return res.status(400).json({ error: 'mhn required' });
+
+  // Already cached?
+  const cached = getIconUrl(mhn);
+  if (cached) return res.json({ url: cached });
+
+  // Don't pile up concurrent requests
+  if (iconFetchInFlight) return res.json({ url: null });
+  iconFetchInFlight = true;
+
+  try {
+    const url = 'https://steamcommunity.com/market/listings/730/' + encodeURIComponent(mhn) + '/render';
+    const r = await axios.get(url, {
+      timeout: 8000,
+      params: { start: 0, count: 1, currency: 1 },
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+    });
+    const listingInfo = r.data?.listinginfo;
+    const firstKey = listingInfo && Object.keys(listingInfo)[0];
+    const icon = firstKey && r.data?.assets?.['730']?.['2']?.[
+      listingInfo[firstKey]?.asset?.id
+    ]?.icon_url;
+
+    if (icon) {
+      iconCache[mhn] = icon;
+      saveIconCache();
+      log('Icon fetched on-demand: ' + mhn);
+      return res.json({ url: icon });
+    }
+    res.json({ url: null });
+  } catch(e) {
+    res.json({ url: null });
+  } finally {
+    iconFetchInFlight = false;
+  }
+});
+
+app.get('/api/currency', (req, res) => {
+  res.json({ currency: activeCurrency, symbol: CURRENCY_SYMBOLS[activeCurrency], rates: exchangeRates });
+});
+app.post('/api/currency', (req, res) => {
+  const { currency } = req.body;
+  if (!CURRENCY_CODES[currency]) return res.status(400).json({ error: 'Invalid currency. Use USD, EUR or GBP' });
+  activeCurrency = currency;
+  log('Currency set to ' + currency);
+  res.json({ ok: true, currency, symbol: CURRENCY_SYMBOLS[currency] });
+});
+
+// ─── Start ────────────────────────────────────────────────────────────────────
+
+loadSchema().then(() => {
+  server.listen(3000, () => {
+    log('CS2 Valuation running at http://localhost:3000');
+    const session = loadSession();
+    if (session?.refreshToken) log('Saved session found for ' + (session.username || 'unknown') + ' — open browser to resume');
+    else log('No saved session — open browser to log in');
+  });
+});

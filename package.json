@@ -1,0 +1,19 @@
+{
+  "name": "cs2-valuation",
+  "version": "1.0.0",
+  "description": "CS2 storage unit + inventory valuation tool",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "bytebuffer": "^5.0.1",
+    "express": "^4.18.2",
+    "globaloffensive": "^3.1.0",
+    "qrcode": "^1.5.3",
+    "steam-session": "^1.1.1",
+    "steam-totp": "^2.1.1",
+    "steam-user": "^4.28.1"
+  }
+}
